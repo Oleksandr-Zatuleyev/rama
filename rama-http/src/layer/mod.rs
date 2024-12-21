@@ -54,3 +54,6 @@ pub(crate) mod util;
 pub mod compression;
 #[cfg(feature = "compression")]
 pub mod decompression;
+
+// TODO: CFG
+pub mod caching;
