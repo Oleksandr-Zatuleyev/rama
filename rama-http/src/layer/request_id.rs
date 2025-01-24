@@ -27,7 +27,7 @@
 //! impl MakeRequestId for MyMakeRequestId {
 //!     fn make_request_id<B>(&self, request: &Request<B>) -> Option<RequestId> {
 //!         let request_id = self.counter
-//!             .fetch_add(1, Ordering::SeqCst)
+//!             .fetch_add(1, Ordering::AcqRel)
 //!             .to_string()
 //!             .parse()
 //!             .unwrap();
@@ -63,6 +63,7 @@ use crate::{
     header::{HeaderName, HeaderValue},
     Request, Response,
 };
+use nanoid::nanoid;
 use rama_core::{Context, Layer, Service};
 use rama_utils::macros::define_inner_service_accessors;
 use uuid::Uuid;
@@ -233,7 +234,7 @@ impl<S, M> SetRequestId<S, M> {
 
 impl<State, S, M, ReqBody, ResBody> Service<State, Request<ReqBody>> for SetRequestId<S, M>
 where
-    State: Send + Sync + 'static,
+    State: Clone + Send + Sync + 'static,
     S: Service<State, Request<ReqBody>, Response = Response<ResBody>>,
     M: MakeRequestId,
     ReqBody: Send + 'static,
@@ -337,7 +338,7 @@ impl<S: Clone> Clone for PropagateRequestId<S> {
 
 impl<State, S, ReqBody, ResBody> Service<State, Request<ReqBody>> for PropagateRequestId<S>
 where
-    State: Send + Sync + 'static,
+    State: Clone + Send + Sync + 'static,
     S: Service<State, Request<ReqBody>, Response = Response<ResBody>>,
     ReqBody: Send + 'static,
     ResBody: Send + 'static,
@@ -381,6 +382,17 @@ pub struct MakeRequestUuid;
 impl MakeRequestId for MakeRequestUuid {
     fn make_request_id<B>(&self, _request: &Request<B>) -> Option<RequestId> {
         let request_id = Uuid::new_v4().to_string().parse().unwrap();
+        Some(RequestId::new(request_id))
+    }
+}
+
+/// A [`MakeRequestId`] that generates `NanoID`s.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MakeRequestNanoid;
+
+impl MakeRequestId for MakeRequestNanoid {
+    fn make_request_id<B>(&self, _request: &Request<B>) -> Option<RequestId> {
+        let request_id = nanoid!().parse().unwrap();
         Some(RequestId::new(request_id))
     }
 }
@@ -460,7 +472,7 @@ mod tests {
     impl MakeRequestId for Counter {
         fn make_request_id<B>(&self, _request: &Request<B>) -> Option<RequestId> {
             let id =
-                HeaderValue::from_str(&self.0.fetch_add(1, Ordering::SeqCst).to_string()).unwrap();
+                HeaderValue::from_str(&self.0.fetch_add(1, Ordering::AcqRel).to_string()).unwrap();
             Some(RequestId::new(id))
         }
     }
@@ -482,5 +494,20 @@ mod tests {
         let mut res = svc.serve(Context::default(), req).await.unwrap();
         let id = res.headers_mut().remove("x-request-id").unwrap();
         id.to_str().unwrap().parse::<Uuid>().unwrap();
+    }
+
+    #[tokio::test]
+    async fn nanoid() {
+        let svc = (
+            SetRequestIdLayer::x_request_id(MakeRequestNanoid),
+            PropagateRequestIdLayer::x_request_id(),
+        )
+            .layer(service_fn(handler));
+
+        // header on response
+        let req = Request::builder().body(Body::empty()).unwrap();
+        let mut res = svc.serve(Context::default(), req).await.unwrap();
+        let id = res.headers_mut().remove("x-request-id").unwrap();
+        assert_eq!(id.to_str().unwrap().chars().count(), 21);
     }
 }

@@ -41,7 +41,7 @@ where
 impl<T, Fut, F> GetExtensionLayer<T, Fut, F>
 where
     F: FnOnce(T) -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = ()> + Send + Sync + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
 {
     /// Create a new [`GetExtensionLayer`].
     pub const fn new(callback: F) -> Self {
@@ -108,7 +108,7 @@ impl<S, T, Fut, F> GetExtension<S, T, Fut, F> {
     pub const fn new(inner: S, callback: F) -> Self
     where
         F: FnOnce(T) -> Fut + Clone + Send + Sync + 'static,
-        Fut: Future<Output = ()> + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
     {
         Self {
             inner,
@@ -122,12 +122,12 @@ impl<S, T, Fut, F> GetExtension<S, T, Fut, F> {
 
 impl<State, Request, S, T, Fut, F> Service<State, Request> for GetExtension<S, T, Fut, F>
 where
-    State: Send + Sync + 'static,
+    State: Clone + Send + Sync + 'static,
     Request: Send + 'static,
     S: Service<State, Request>,
     T: Clone + Send + Sync + 'static,
     F: FnOnce(T) -> Fut + Clone + Send + Sync + 'static,
-    Fut: Future<Output = ()> + Send + Sync + 'static,
+    Fut: Future<Output = ()> + Send + 'static,
 {
     type Response = S::Response;
     type Error = S::Error;
@@ -160,7 +160,7 @@ mod tests {
 
         let cloned_value = value.clone();
         let svc = GetExtensionLayer::new(|state: State| async move {
-            cloned_value.store(state.0, std::sync::atomic::Ordering::SeqCst);
+            cloned_value.store(state.0, std::sync::atomic::Ordering::Release);
         })
         .layer(service_fn(|ctx: Context<()>, _req: ()| async move {
             let state = ctx.get::<State>().unwrap();
@@ -173,7 +173,7 @@ mod tests {
         let res = svc.serve(ctx, ()).await.unwrap();
         assert_eq!(42, res);
 
-        let value = value.load(std::sync::atomic::Ordering::SeqCst);
+        let value = value.load(std::sync::atomic::Ordering::Acquire);
         assert_eq!(42, value);
     }
 }

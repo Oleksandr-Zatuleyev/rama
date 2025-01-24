@@ -18,7 +18,7 @@ use std::future::Future;
 ///
 /// impl<S, R, E> Policy<S, R, E> for Attempts
 ///     where
-///         S: Send + Sync + 'static,
+///         S: Clone + Send + Sync + 'static,
 ///         R: Send + 'static,
 ///         E: Send + Sync + 'static,
 /// {
@@ -102,6 +102,28 @@ pub trait Policy<S, R, E>: Send + Sync + 'static {
     ) -> Option<(Context<S>, Request<RetryBody>)>;
 }
 
+impl<P, S, R, E> Policy<S, R, E> for &'static P
+where
+    P: Policy<S, R, E>,
+{
+    fn retry(
+        &self,
+        ctx: Context<S>,
+        req: Request<RetryBody>,
+        result: Result<R, E>,
+    ) -> impl Future<Output = PolicyResult<S, R, E>> + Send + '_ {
+        (**self).retry(ctx, req, result)
+    }
+
+    fn clone_input(
+        &self,
+        ctx: &Context<S>,
+        req: &Request<RetryBody>,
+    ) -> Option<(Context<S>, Request<RetryBody>)> {
+        (**self).clone_input(ctx, req)
+    }
+}
+
 impl<P, S, R, E> Policy<S, R, E> for std::sync::Arc<P>
 where
     P: Policy<S, R, E>,
@@ -162,7 +184,7 @@ macro_rules! impl_retry_policy_either {
         impl<$($param),+, State, Response, Error> Policy<State, Response, Error> for rama_core::combinators::$id<$($param),+>
         where
             $($param: Policy<State, Response, Error>),+,
-            State: Send + Sync + 'static,
+            State: Clone + Send + Sync + 'static,
             Response: Send + 'static,
             Error: Send + Sync + 'static,
         {

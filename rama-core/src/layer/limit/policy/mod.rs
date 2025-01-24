@@ -111,7 +111,7 @@ pub trait Policy<State, Request>: Send + Sync + 'static {
 impl<State, Request, P> Policy<State, Request> for Option<P>
 where
     P: Policy<State, Request>,
-    State: Send + Sync + 'static,
+    State: Clone + Send + Sync + 'static,
     Request: Send + 'static,
 {
     type Guard = Option<P::Guard>;
@@ -152,10 +152,28 @@ where
     }
 }
 
+impl<State, Request, P> Policy<State, Request> for &'static P
+where
+    P: Policy<State, Request>,
+    State: Clone + Send + Sync + 'static,
+    Request: Send + 'static,
+{
+    type Guard = P::Guard;
+    type Error = P::Error;
+
+    async fn check(
+        &self,
+        ctx: Context<State>,
+        request: Request,
+    ) -> PolicyResult<State, Request, Self::Guard, Self::Error> {
+        (**self).check(ctx, request).await
+    }
+}
+
 impl<State, Request, P> Policy<State, Request> for Arc<P>
 where
     P: Policy<State, Request>,
-    State: Send + Sync + 'static,
+    State: Clone + Send + Sync + 'static,
     Request: Send + 'static,
 {
     type Guard = P::Guard;
@@ -173,7 +191,7 @@ where
 impl<State, Request, P> Policy<State, Request> for Box<P>
 where
     P: Policy<State, Request>,
-    State: Send + Sync + 'static,
+    State: Clone + Send + Sync + 'static,
     Request: Send + 'static,
 {
     type Guard = P::Guard;
@@ -202,7 +220,7 @@ impl UnlimitedPolicy {
 
 impl<State, Request> Policy<State, Request> for UnlimitedPolicy
 where
-    State: Send + Sync + 'static,
+    State: Clone + Send + Sync + 'static,
     Request: Send + 'static,
 {
     type Guard = ();
@@ -230,7 +248,7 @@ macro_rules! impl_limit_policy_either {
                 $param::Error: Into<BoxError>,
             )+
             Request: Send + 'static,
-            State: Send + Sync + 'static,
+            State: Clone + Send + Sync + 'static,
         {
             type Guard = crate::combinators::$id<$($param::Guard),+>;
             type Error = BoxError;

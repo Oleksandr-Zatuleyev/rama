@@ -5,10 +5,13 @@ version = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 repository = { workspace = true }
-keywords = { workspace = true }
-categories = { workspace = true }
+keywords = ["http", "headers", "mime", "rama"]
+categories = ["web-programming"]
 authors = { workspace = true }
 rust-version = { workspace = true }
+
+[lints]
+workspace = true
 
 [dependencies]
 bytes = { workspace = true }
@@ -23,11 +26,13 @@ mime = { workspace = true }
 mime_guess = { workspace = true }
 paste = { workspace = true }
 pin-project-lite = { workspace = true }
-rama-error = { version = "0.2.0-alpha.3", path = "../rama-error" }
-rama-utils = { version = "0.2.0-alpha.3", path = "../rama-utils" }
+rama-core = { version = "0.2.0-alpha.7", path = "../rama-core" }
+rama-error = { version = "0.2.0-alpha.7", path = "../rama-error" }
+rama-utils = { version = "0.2.0-alpha.7", path = "../rama-utils" }
 serde = { workspace = true, features = ["derive"] }
 serde_html_form = { workspace = true }
 serde_json = { workspace = true }
+smallvec = { workspace = true }
 sync_wrapper = { workspace = true }
 tracing = { workspace = true }
 

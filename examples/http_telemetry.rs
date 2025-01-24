@@ -37,16 +37,12 @@
 //! You can now use tools like grafana to collect metrics from the collector running at 127.0.0.1:4317 over GRPC.
 
 use opentelemetry_otlp::{ExportConfig, Protocol, WithExportConfig};
-use opentelemetry_sdk::{
-    metrics::reader::{DefaultAggregationSelector, DefaultTemporalitySelector},
-    Resource,
-};
 use rama::{
     http::{
         layer::{opentelemetry::RequestMetricsLayer, trace::TraceLayer},
         response::Html,
         server::HttpServer,
-        service::web::{extract::State, WebService},
+        service::web::WebService,
     },
     net::stream::layer::opentelemetry::NetworkMetricsLayer,
     rt::Executor,
@@ -54,15 +50,19 @@ use rama::{
     telemetry::opentelemetry::{
         self,
         metrics::UpDownCounter,
+        sdk::{
+            metrics::{PeriodicReader, SdkMeterProvider},
+            runtime, Resource,
+        },
         semantic_conventions::{
             self,
             resource::{HOST_ARCH, OS_NAME},
         },
-        KeyValue,
+        InstrumentationScope, KeyValue,
     },
-    Layer,
+    Context, Layer,
 };
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
@@ -72,17 +72,19 @@ struct Metrics {
 }
 
 impl Metrics {
-    pub fn new() -> Self {
-        let meter = opentelemetry::global::meter_with_version(
-            "example.http_telemetry",
-            Some(env!("CARGO_PKG_VERSION")),
-            Some(semantic_conventions::SCHEMA_URL),
-            Some(vec![
-                KeyValue::new(OS_NAME, std::env::consts::OS),
-                KeyValue::new(HOST_ARCH, std::env::consts::ARCH),
-            ]),
+    fn new() -> Self {
+        let meter = opentelemetry::global::meter_with_scope(
+            InstrumentationScope::builder("example.http_telemetry")
+                .with_version(env!("CARGO_PKG_VERSION"))
+                .with_schema_url(semantic_conventions::SCHEMA_URL)
+                .with_attributes(vec![
+                    KeyValue::new(OS_NAME, std::env::consts::OS),
+                    KeyValue::new(HOST_ARCH, std::env::consts::ARCH),
+                ])
+                .build(),
         );
-        let counter = meter.i64_up_down_counter("visitor_counter").init();
+
+        let counter = meter.i64_up_down_counter("visitor_counter").build();
         Self { counter }
     }
 }
@@ -101,34 +103,34 @@ async fn main() {
 
     // configure OT metrics exporter
     let export_config = ExportConfig {
-        endpoint: "http://localhost:4317".to_string(),
+        endpoint: Some("http://localhost:4317".to_owned()),
         timeout: Duration::from_secs(3),
         protocol: Protocol::Grpc,
     };
 
-    let meter = opentelemetry_otlp::new_pipeline()
-        .metrics(opentelemetry_sdk::runtime::Tokio)
-        .with_exporter(
-            opentelemetry_otlp::new_exporter()
-                .tonic()
-                .with_export_config(export_config),
-            // can also config it using with_* functions like the tracing part above.
-        )
+    let meter_exporter = opentelemetry_otlp::MetricExporter::builder()
+        .with_tonic()
+        .with_export_config(export_config)
+        .build()
+        .expect("build OT exporter");
+
+    let meter_reader = PeriodicReader::builder(meter_exporter, runtime::Tokio)
+        .with_interval(Duration::from_secs(3))
+        .with_timeout(Duration::from_secs(10))
+        .build();
+
+    let meter = SdkMeterProvider::builder()
         .with_resource(Resource::new(vec![KeyValue::new(
             "service.name",
             "http_telemetry",
         )]))
-        .with_period(Duration::from_secs(3))
-        .with_timeout(Duration::from_secs(10))
-        .with_aggregation_selector(DefaultAggregationSelector::new())
-        .with_temporality_selector(DefaultTemporalitySelector::new())
-        .build()
-        .expect("build OT meter");
+        .with_reader(meter_reader)
+        .build();
 
     opentelemetry::global::set_meter_provider(meter);
 
     // state for our custom app metrics
-    let state = Metrics::new();
+    let state = Arc::new(Metrics::new());
 
     let graceful = rama::graceful::Shutdown::default();
 
@@ -138,8 +140,8 @@ async fn main() {
         let exec = Executor::graceful(guard.clone());
         let http_service = HttpServer::auto(exec).service(
             (TraceLayer::new_for_http(), RequestMetricsLayer::default()).layer(
-                WebService::default().get("/", |State(metrics): State<Metrics>| async move {
-                    metrics.counter.add(1, &[]);
+                WebService::default().get("/", |ctx: Context<Arc<Metrics>>| async move {
+                    ctx.state().counter.add(1, &[]);
                     Html("<h1>Hello!</h1>")
                 }),
             ),

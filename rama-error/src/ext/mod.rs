@@ -243,7 +243,11 @@ mod tests {
 
     impl std::error::Error for WrapperError {
         fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-            Some(self.0.as_ref())
+            if let Some(err) = self.0.source() {
+                return Some(err);
+            }
+            let err = self.0.as_ref();
+            Some(err as &(dyn std::error::Error + 'static))
         }
     }
 
@@ -254,6 +258,20 @@ mod tests {
             .backtrace();
         let source = std::error::Error::source(&error).unwrap();
         assert!(source.downcast_ref::<CustomError>().is_some());
+    }
+
+    #[test]
+    fn test_chain_error_source() {
+        let error = OpaqueError::from_boxed(
+            CustomError
+                .context("foo")
+                .context("bar")
+                .backtrace()
+                .context("baz")
+                .into_boxed(),
+        );
+        let source = std::error::Error::source(&error).unwrap();
+        assert!(source.is::<CustomError>());
     }
 
     #[test]

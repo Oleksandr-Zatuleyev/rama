@@ -26,7 +26,7 @@ pub struct TransportContext {
     pub authority: Authority,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 /// The protocol used for the transport layer.
 pub enum TransportProtocol {
     /// The `tcp` protocol.

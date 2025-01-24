@@ -13,7 +13,7 @@ impl Bearer {
     pub fn try_from_header_str(value: impl AsRef<str>) -> Result<Self, OpaqueError> {
         let value = value.as_ref();
 
-        if value.as_bytes().len() <= BEARER_SCHEME.len() + 1 {
+        if value.len() <= BEARER_SCHEME.len() + 1 {
             return Err(OpaqueError::from_display("invalid bearer scheme length"));
         }
         if !value.as_bytes()[..BEARER_SCHEME.len()].eq_ignore_ascii_case(BEARER_SCHEME.as_bytes()) {
@@ -92,7 +92,6 @@ impl authorization::Credentials for Bearer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use authorization::Credentials;
 
     #[test]
     fn bearer_parse_empty() {
@@ -105,6 +104,27 @@ mod tests {
         let value = Bearer::try_from_clear_str("");
         assert!(value.is_err());
     }
+
+    #[test]
+    fn bearer_header() {
+        let auth = Bearer::try_from_header_str("Bearer 123abc").unwrap();
+        assert_eq!(auth.token(), "123abc");
+        assert_eq!("Bearer 123abc", auth.as_header_string());
+    }
+
+    #[test]
+    fn bearer_clear() {
+        let auth = Bearer::try_from_clear_str("foobar".to_owned()).unwrap();
+        assert_eq!(auth.token(), "foobar");
+        assert_eq!("foobar", auth.as_clear_string());
+    }
+}
+
+#[cfg(feature = "http")]
+#[cfg(test)]
+mod http_tests {
+    use super::*;
+    use authorization::Credentials;
 
     #[test]
     fn bearer_encode() {
@@ -133,19 +153,5 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(auth.token(), "QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
-    }
-
-    #[test]
-    fn bearer_header() {
-        let auth = Bearer::try_from_header_str("Bearer 123abc").unwrap();
-        assert_eq!(auth.token(), "123abc");
-        assert_eq!("Bearer 123abc", auth.as_header_string());
-    }
-
-    #[test]
-    fn bearer_clear() {
-        let auth = Bearer::try_from_clear_str("foobar".to_owned()).unwrap();
-        assert_eq!(auth.token(), "foobar");
-        assert_eq!("foobar", auth.as_clear_string());
     }
 }

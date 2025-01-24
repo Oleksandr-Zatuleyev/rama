@@ -1,16 +1,12 @@
-use super::{ProxyFilter, StringFilter};
-use rama_net::{
-    address::ProxyAddress,
-    asn::Asn,
-    transport::{TransportContext, TransportProtocol},
-};
+use super::{ProxyContext, ProxyFilter, StringFilter};
+use rama_net::{address::ProxyAddress, asn::Asn, transport::TransportProtocol};
 use rama_utils::str::NonEmptyString;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "memory-db")]
 use venndb::VennDB;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "memory-db", derive(VennDB))]
 #[cfg_attr(feature = "memory-db", venndb(validator = proxydb_insert_validator))]
 /// The selected proxy to use to connect to the proxy.
@@ -87,8 +83,8 @@ fn proxydb_insert_validator(proxy: &Proxy) -> bool {
 }
 
 impl Proxy {
-    /// Check if the proxy is a match for the given[`TransportContext`] and [`ProxyFilter`].
-    pub fn is_match(&self, ctx: &TransportContext, filter: &ProxyFilter) -> bool {
+    /// Check if the proxy is a match for the given[`ProxyContext`] and [`ProxyFilter`].
+    pub fn is_match(&self, ctx: &ProxyContext, filter: &ProxyFilter) -> bool {
         if let Some(id) = &filter.id {
             if id != &self.id {
                 return false;
@@ -108,7 +104,7 @@ impl Proxy {
             }
         }
 
-        return filter
+        filter
             .continent
             .as_ref()
             .map(|c| {
@@ -172,7 +168,7 @@ impl Proxy {
                 .residential
                 .map(|r| r == self.residential)
                 .unwrap_or(true)
-            && filter.mobile.map(|m| m == self.mobile).unwrap_or(true);
+            && filter.mobile.map(|m| m == self.mobile).unwrap_or(true)
     }
 }
 

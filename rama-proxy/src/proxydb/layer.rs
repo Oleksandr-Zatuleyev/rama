@@ -1,4 +1,4 @@
-use super::{Proxy, ProxyDB, ProxyFilter, ProxyQueryPredicate};
+use super::{Proxy, ProxyContext, ProxyDB, ProxyFilter, ProxyQueryPredicate};
 use rama_core::{
     error::{BoxError, ErrorContext, ErrorExt, OpaqueError},
     Context, Layer, Service,
@@ -179,7 +179,7 @@ where
     D: ProxyDB<Error: Into<BoxError> + Send + Sync + 'static>,
     P: ProxyQueryPredicate,
     F: UsernameFormatter<State>,
-    State: Send + Sync + 'static,
+    State: Clone + Send + Sync + 'static,
     Request: TryRefIntoTransportContext<State, Error: Into<BoxError> + Send + Sync + 'static>
         + Send
         + 'static,
@@ -207,25 +207,30 @@ where
                     .context("missing proxy filter")?,
             ),
             ProxyFilterMode::Fallback(ref filter) => {
-                ctx.get::<ProxyFilter>().cloned().or(Some(filter.clone()))
+                Some(ctx.get_or_insert_with(|| filter.clone()).clone())
             }
         };
 
         if let Some(filter) = maybe_filter {
-            let transport_ctx = ctx
+            let proxy_ctx: ProxyContext = (&*ctx
                 .get_or_try_insert_with_ctx(|ctx| req.try_ref_into_transport_ctx(ctx))
                 .map_err(|err| {
                     OpaqueError::from_boxed(err.into())
                         .context("proxydb: select proxy: get transport context")
-                })?
-                .clone();
-            let transport_protocol = transport_ctx.protocol.clone();
+                })?)
+                .into();
+            let transport_protocol = proxy_ctx.protocol;
 
             let proxy = self
                 .db
-                .get_proxy_if(transport_ctx, filter.clone(), self.predicate.clone())
+                .get_proxy_if(proxy_ctx, filter.clone(), self.predicate.clone())
                 .await
-                .map_err(|err| OpaqueError::from_boxed(err.into()).context("select proxy in DB"))?;
+                .map_err(|err| {
+                    OpaqueError::from_std(ProxySelectError {
+                        inner: err.into(),
+                        filter: filter.clone(),
+                    })
+                })?;
 
             let mut proxy_address = proxy.address.clone();
 
@@ -295,10 +300,35 @@ where
             ctx.insert(proxy_address);
 
             // insert the id of the selected proxy
-            ctx.insert(super::ProxyID::from(proxy.id));
+            ctx.insert(super::ProxyID::from(proxy.id.clone()));
+
+            // insert the entire proxy also in there, for full "Context"
+            ctx.insert(proxy);
         }
 
         self.inner.serve(ctx, req).await.map_err(Into::into)
+    }
+}
+
+#[derive(Debug)]
+struct ProxySelectError {
+    inner: BoxError,
+    filter: ProxyFilter,
+}
+
+impl fmt::Display for ProxySelectError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "proxy select error ({}) for filter: {:?}",
+            self.inner, self.filter
+        )
+    }
+}
+
+impl std::error::Error for ProxySelectError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(self.inner.source().unwrap_or_else(|| self.inner.as_ref()))
     }
 }
 

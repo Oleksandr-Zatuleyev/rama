@@ -2,7 +2,7 @@
 //!
 //! See [`Asn`] and its methods for more information.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::fmt;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -44,6 +44,11 @@ impl Asn {
             AsnData::Specified(n) => n,
             AsnData::Unspecified => 0,
         }
+    }
+
+    /// Returns `true` if this value is considered to be "any" value.
+    pub fn is_any(&self) -> bool {
+        self.0 == AsnData::Unspecified
     }
 }
 
@@ -113,7 +118,19 @@ impl fmt::Display for Asn {
 #[cfg(feature = "venndb")]
 impl venndb::Any for Asn {
     fn is_any(&self) -> bool {
-        self.0 == AsnData::Unspecified
+        Self::is_any(self)
+    }
+}
+
+impl Serialize for Asn {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self.0 {
+            AsnData::Unspecified => 0u32.serialize(serializer),
+            AsnData::Specified(u) => u.serialize(serializer),
+        }
     }
 }
 
@@ -129,16 +146,7 @@ impl<'de> Deserialize<'de> for Asn {
     }
 }
 
-#[derive(Debug, Clone)]
-#[non_exhaustive]
-/// Error to indicate an invalid ASN for any reason,
-/// most typically being because it is within the reserved space.
-pub struct InvalidAsn;
-
-impl fmt::Display for InvalidAsn {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "invalid ASN")
-    }
+rama_utils::macros::error::static_str_error! {
+    #[doc = "invalid ASN (e.g. within reserved space)"]
+    pub struct InvalidAsn;
 }
-
-impl std::error::Error for InvalidAsn {}

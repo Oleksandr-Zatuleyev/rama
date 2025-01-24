@@ -1,5 +1,4 @@
 use super::Host;
-use rama_core::dns::TryIntoName;
 use rama_core::error::{ErrorContext, OpaqueError};
 use std::{borrow::Cow, cmp::Ordering, fmt, iter::repeat};
 
@@ -167,12 +166,6 @@ impl TryFrom<Vec<u8>> for Domain {
     }
 }
 
-impl TryIntoName for Domain {
-    fn try_into_name(self) -> Result<rama_core::dns::Name, OpaqueError> {
-        self.to_string().try_into_name()
-    }
-}
-
 fn cmp_domain(a: impl AsRef<str>, b: impl AsRef<str>) -> Ordering {
     let a = a.as_ref();
     let a = a.strip_prefix('.').unwrap_or(a);
@@ -312,8 +305,8 @@ impl<'de> serde::Deserialize<'de> for Domain {
     where
         D: serde::Deserializer<'de>,
     {
-        let s = String::deserialize(deserializer)?;
-        s.try_into().map_err(serde::de::Error::custom)
+        let s = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -410,6 +403,7 @@ mod tests {
             "example.com.",
             ".example.com.",
             "rr5---sn-q4fl6n6s.video.com", // multiple dashes
+            "127.0.0.1",
         ] {
             let msg = format!("to parse: {}", str);
             assert_eq!(Domain::try_from(str.to_owned()).expect(msg.as_str()), str);
@@ -433,6 +427,7 @@ mod tests {
             "-.-.",
             "-.-.-",
             ".-.-",
+            "2001:db8:3333:4444:5555:6666:7777:8888",
             "-example.com",
             "local!host",
             "thislabeliswaytoolongforbeingeversomethingwewishtocareabout-example.com",

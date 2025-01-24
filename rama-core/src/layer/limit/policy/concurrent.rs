@@ -104,7 +104,7 @@ impl<B> ConcurrentPolicy<B, ConcurrentCounter> {
 impl<B, C, State, Request> Policy<State, Request> for ConcurrentPolicy<B, C>
 where
     B: Backoff,
-    State: Send + Sync + 'static,
+    State: Clone + Send + Sync + 'static,
     Request: Send + 'static,
     C: ConcurrentTracker,
 {
@@ -141,18 +141,10 @@ where
     }
 }
 
-/// The error that indicates the request is aborted,
-/// because the concurrent request limit is reached.
-#[derive(Debug)]
-pub struct LimitReached;
-
-impl std::fmt::Display for LimitReached {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("LimitReached")
-    }
+rama_utils::macros::error::static_str_error! {
+    #[doc = "request aborted due to exhausted concurrency limit"]
+    pub struct LimitReached;
 }
-
-impl std::error::Error for LimitReached {}
 
 /// The tracker trait that can be implemented to provide custom concurrent request tracking.
 ///

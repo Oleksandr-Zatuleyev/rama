@@ -19,7 +19,7 @@ use rama::{
     net::stream::layer::http::BodyLimitLayer,
     rt::Executor,
     service::service_fn,
-    tcp::{server::TcpListener, utils::is_connection_error},
+    tcp::{client::default_tcp_connect, server::TcpListener, utils::is_connection_error},
     Context, Layer, Service,
 };
 use std::{convert::Infallible, time::Duration};
@@ -107,7 +107,7 @@ async fn http_connect_accept<S>(
     req: Request,
 ) -> Result<(Response, Context<S>, Request), Response>
 where
-    S: Send + Sync + 'static,
+    S: Clone + Send + Sync + 'static,
 {
     match ctx.get_or_try_insert_with_ctx::<RequestContext, _>(|ctx| (ctx, &req).try_into()) {
         Ok(request_ctx) => tracing::info!("accept CONNECT to {}", request_ctx.authority),
@@ -122,15 +122,15 @@ where
 
 async fn http_connect_proxy<S>(ctx: Context<S>, mut upgraded: Upgraded) -> Result<(), Infallible>
 where
-    S: Send + Sync + 'static,
+    S: Clone + Send + Sync + 'static,
 {
     let authority = ctx // assumption validated by `http_connect_accept`
         .get::<RequestContext>()
         .unwrap()
         .authority
-        .to_string();
-    tracing::info!("CONNECT to {}", authority);
-    let mut stream = match tokio::net::TcpStream::connect(authority).await {
+        .clone();
+    tracing::info!("CONNECT to {authority}");
+    let (mut stream, _) = match default_tcp_connect(&ctx, authority).await {
         Ok(stream) => stream,
         Err(err) => {
             tracing::error!(error = %err, "error connecting to host");
@@ -147,7 +147,7 @@ where
 
 async fn http_plain_proxy<S>(ctx: Context<S>, req: Request) -> Result<Response, Infallible>
 where
-    S: Send + Sync + 'static,
+    S: Clone + Send + Sync + 'static,
 {
     let client = HttpClient::default();
     match client.serve(ctx, req).await {

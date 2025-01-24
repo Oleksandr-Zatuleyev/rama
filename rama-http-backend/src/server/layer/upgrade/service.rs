@@ -75,7 +75,7 @@ where
 
 impl<S, State, O, E> Service<State, Request> for UpgradeService<S, State, O>
 where
-    State: Send + Sync + 'static,
+    State: Clone + Send + Sync + 'static,
     S: Service<State, Request, Response = O, Error = E>,
     O: Send + Sync + 'static,
     E: Send + Sync + 'static,
@@ -100,9 +100,8 @@ where
                 Ok((resp, ctx, mut req)) => {
                     let handler = handler.handler.clone();
                     exec.spawn_task(async move {
-                        match hyper::upgrade::on(&mut req).await {
+                        match rama_http_core::upgrade::on(&mut req).await {
                             Ok(upgraded) => {
-                                let upgraded = Upgraded::new(upgraded);
                                 let _ = handler.serve(ctx, upgraded).await;
                             }
                             Err(e) => {

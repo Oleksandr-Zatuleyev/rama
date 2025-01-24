@@ -31,6 +31,11 @@ impl NonEmptyString {
     pub fn as_str(&self) -> &str {
         self.0.as_ref()
     }
+
+    /// Views this [`NonEmptyString`] as a bytes slice.
+    pub fn as_bytes(&self) -> &[u8] {
+        self.0.as_ref().as_bytes()
+    }
 }
 
 impl fmt::Display for NonEmptyString {
@@ -158,8 +163,8 @@ impl<'de> serde::Deserialize<'de> for NonEmptyString {
     where
         D: serde::Deserializer<'de>,
     {
-        let s = String::deserialize(deserializer)?;
-        s.try_into().map_err(serde::de::Error::custom)
+        let s = <Cow<'de, str>>::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
     }
 }
 
@@ -197,5 +202,20 @@ mod tests {
         assert_try_into_ok(String::from("b"));
         #[allow(clippy::needless_borrows_for_generic_args)]
         assert_try_into_ok(&String::from("c"));
+    }
+
+    #[test]
+    fn test_serde_json_compat() {
+        let source = r##"{"greeting": "Hello", "language": "en"}"##.to_owned();
+
+        #[derive(Debug, serde::Deserialize)]
+        struct Test {
+            greeting: NonEmptyString,
+            language: NonEmptyString,
+        }
+
+        let test: Test = serde_json::from_str(&source).unwrap();
+        assert_eq!("Hello", test.greeting);
+        assert_eq!("en", test.language);
     }
 }

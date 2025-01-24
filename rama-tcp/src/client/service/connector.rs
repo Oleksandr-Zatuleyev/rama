@@ -2,6 +2,7 @@ use rama_core::{
     error::{BoxError, ErrorContext, ErrorExt, OpaqueError},
     Context, Service,
 };
+use rama_dns::{DnsResolver, HickoryDns};
 use rama_net::{
     address::ProxyAddress,
     client::EstablishedClientConnection,
@@ -9,18 +10,66 @@ use rama_net::{
 };
 use tokio::net::TcpStream;
 
+use crate::client::connect::TcpStreamConnector;
+
+use super::{CreatedTcpStreamConnector, TcpStreamConnectorCloneFactory, TcpStreamConnectorFactory};
+
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 /// A connector which can be used to establish a TCP connection to a server.
-pub struct TcpConnector;
+pub struct TcpConnector<Dns = HickoryDns, ConnectorFactory = ()> {
+    dns: Dns,
+    connector_factory: ConnectorFactory,
+}
+
+impl<Dns, Connector> TcpConnector<Dns, Connector> {}
 
 impl TcpConnector {
     /// Create a new [`TcpConnector`], which is used to establish a connection to a server.
     ///
     /// You can use middleware around the [`TcpConnector`]
     /// or add connection pools, retry logic and more.
-    pub const fn new() -> Self {
-        TcpConnector
+    pub fn new() -> Self {
+        Self {
+            dns: HickoryDns::default(),
+            connector_factory: (),
+        }
+    }
+}
+
+impl<Dns, ConnectorFactory> TcpConnector<Dns, ConnectorFactory> {
+    /// Consume `self` to attach the given `dns` (a [`DnsResolver`]) as a new [`TcpConnector`].
+    pub fn with_dns<OtherDns>(self, dns: OtherDns) -> TcpConnector<OtherDns, ConnectorFactory>
+    where
+        OtherDns: DnsResolver<Error: Into<BoxError>> + Clone,
+    {
+        TcpConnector {
+            dns,
+            connector_factory: self.connector_factory,
+        }
+    }
+}
+
+impl<Dns> TcpConnector<Dns, ()> {
+    /// Consume `self` to attach the given `Connector` (a [`TcpStreamConnector`]) as a new [`TcpConnector`].
+    pub fn with_connector<Connector>(
+        self,
+        connector: Connector,
+    ) -> TcpConnector<Dns, TcpStreamConnectorCloneFactory<Connector>>
+where {
+        TcpConnector {
+            dns: self.dns,
+            connector_factory: TcpStreamConnectorCloneFactory(connector),
+        }
+    }
+
+    /// Consume `self` to attach the given `Factory` (a [`TcpStreamConnectorFactory`]) as a new [`TcpConnector`].
+    pub fn with_connector_factory<Factory>(self, factory: Factory) -> TcpConnector<Dns, Factory>
+where {
+        TcpConnector {
+            dns: self.dns,
+            connector_factory: factory,
+        }
     }
 }
 
@@ -30,24 +79,43 @@ impl Default for TcpConnector {
     }
 }
 
-impl<State, Request> Service<State, Request> for TcpConnector
+impl<State, Request, Dns, ConnectorFactory> Service<State, Request>
+    for TcpConnector<Dns, ConnectorFactory>
 where
-    State: Send + Sync + 'static,
+    State: Clone + Send + Sync + 'static,
     Request: TryRefIntoTransportContext<State> + Send + 'static,
     Request::Error: Into<BoxError> + Send + Sync + 'static,
+    Dns: DnsResolver<Error: Into<BoxError>> + Clone,
+    ConnectorFactory: TcpStreamConnectorFactory<
+            State,
+            Connector: TcpStreamConnector<Error: Into<BoxError> + Send + 'static>,
+            Error: Into<BoxError> + Send + 'static,
+        > + Clone,
 {
     type Response = EstablishedClientConnection<TcpStream, State, Request>;
     type Error = BoxError;
 
     async fn serve(
         &self,
-        mut ctx: Context<State>,
+        ctx: Context<State>,
         req: Request,
     ) -> Result<Self::Response, Self::Error> {
+        let CreatedTcpStreamConnector { mut ctx, connector } = self
+            .connector_factory
+            .make_connector(ctx)
+            .await
+            .map_err(Into::into)?;
+
         if let Some(proxy) = ctx.get::<ProxyAddress>() {
-            let (conn, addr) = crate::client::connect_trusted(&ctx, proxy.authority.clone())
-                .await
-                .context("tcp connector: conncept to proxy")?;
+            let (conn, addr) = crate::client::tcp_connect(
+                &ctx,
+                proxy.authority.clone(),
+                true,
+                self.dns.clone(),
+                connector,
+            )
+            .await
+            .context("tcp connector: conncept to proxy")?;
             return Ok(EstablishedClientConnection {
                 ctx,
                 req,
@@ -75,9 +143,10 @@ where
         }
 
         let authority = transport_ctx.authority.clone();
-        let (conn, addr) = crate::client::connect(&ctx, authority)
-            .await
-            .context("tcp connector: connect to server")?;
+        let (conn, addr) =
+            crate::client::tcp_connect(&ctx, authority, false, self.dns.clone(), connector)
+                .await
+                .context("tcp connector: connect to server")?;
 
         Ok(EstablishedClientConnection {
             ctx,

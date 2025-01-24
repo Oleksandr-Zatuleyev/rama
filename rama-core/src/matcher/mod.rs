@@ -12,6 +12,8 @@
 //!
 //! [`Context`]: crate::Context
 
+use std::sync::Arc;
+
 use super::{context::Extensions, Context};
 use crate::Service;
 use paste::paste;
@@ -36,6 +38,10 @@ pub use mfn::{match_fn, MatchFn};
 mod iter;
 #[doc(inline)]
 pub use iter::IteratorMatcherExt;
+
+mod ext;
+#[doc(inline)]
+pub use ext::ExtensionMatcher;
 
 /// A condition to decide whether `Request` within the given [`Context`] matches for
 /// router or other middleware purposes.
@@ -74,6 +80,24 @@ pub trait Matcher<State, Request>: Send + Sync + 'static {
     }
 }
 
+impl<State, Request, T> Matcher<State, Request> for Arc<T>
+where
+    T: Matcher<State, Request>,
+{
+    fn matches(&self, ext: Option<&mut Extensions>, ctx: &Context<State>, req: &Request) -> bool {
+        (**self).matches(ext, ctx, req)
+    }
+}
+
+impl<State, Request, T> Matcher<State, Request> for &'static T
+where
+    T: Matcher<State, Request>,
+{
+    fn matches(&self, ext: Option<&mut Extensions>, ctx: &Context<State>, req: &Request) -> bool {
+        (**self).matches(ext, ctx, req)
+    }
+}
+
 impl<State, Request, T> Matcher<State, Request> for Option<T>
 where
     T: Matcher<State, Request>,
@@ -81,7 +105,7 @@ where
     fn matches(&self, ext: Option<&mut Extensions>, ctx: &Context<State>, req: &Request) -> bool {
         match self {
             Some(inner) => inner.matches(ext, ctx, req),
-            None => true,
+            None => false,
         }
     }
 }
@@ -97,7 +121,7 @@ where
 
 impl<State, Request> Matcher<State, Request> for Box<(dyn Matcher<State, Request> + 'static)>
 where
-    State: Send + Sync + 'static,
+    State: Clone + Send + Sync + 'static,
     Request: Send + 'static,
 {
     fn matches(&self, ext: Option<&mut Extensions>, ctx: &Context<State>, req: &Request) -> bool {
@@ -117,7 +141,7 @@ macro_rules! impl_matcher_either {
         where
             $($param: Matcher<State, Request>),+,
             Request: Send + 'static,
-            State: Send + Sync + 'static,
+            State: Clone + Send + Sync + 'static,
         {
             fn matches(
                 &self,
@@ -144,7 +168,7 @@ macro_rules! impl_matcher_service_tuple {
             #[allow(non_snake_case)]
             impl<State, $([<M_ $T>], $T),+, S, Request, Response, Error> Service<State, Request> for ($(([<M_ $T>], $T)),+, S)
             where
-                State: Send + Sync + 'static,
+                State: Clone + Send + Sync + 'static,
                 Request: Send + 'static,
                 Response: Send + 'static,
                 $(

@@ -7,8 +7,8 @@
 
 use crate::{
     cli::ForwardKind,
-    combinators::Either7,
-    error::BoxError,
+    combinators::{Either3, Either7},
+    error::{BoxError, OpaqueError},
     http::{
         dep::http_body_util::BodyExt,
         headers::{CFConnectingIp, ClientIp, TrueClientIp, XClientIp, XRealIp},
@@ -18,11 +18,14 @@ use crate::{
             trace::TraceLayer,
             ua::{UserAgent, UserAgentClassifierLayer},
         },
+        proto::h1::Http1HeaderMap,
+        proto::h2::PseudoHeaderOrder,
         response::Json,
         server::HttpServer,
-        IntoResponse, Request, Response,
+        IntoResponse, Request, Response, Version,
     },
     layer::{limit::policy::ConcurrentPolicy, ConsumeErrLayer, LimitLayer, TimeoutLayer},
+    net::fingerprint::Ja4H,
     net::forwarded::Forwarded,
     net::http::RequestContext,
     net::stream::{layer::http::BodyLimitLayer, SocketInfo},
@@ -36,16 +39,11 @@ use tokio::net::TcpStream;
 
 #[cfg(any(feature = "rustls", feature = "boring"))]
 use crate::{
-    cli::tls::TlsServerCertKeyPair,
-    error::{ErrorContext, OpaqueError},
+    net::fingerprint::{Ja3, Ja4},
+    net::tls::server::ServerConfig,
+    tls::std::server::TlsAcceptorLayer,
     tls::types::{client::ClientHelloExtension, SecureTransport},
 };
-
-#[cfg(feature = "boring")]
-use crate::tls::boring::server::TlsAcceptorLayer;
-
-#[cfg(all(feature = "rustls", not(feature = "boring")))]
-use crate::tls::rustls::server::{TlsAcceptorLayer, TlsClientConfigHandler};
 
 #[derive(Debug, Clone)]
 /// Builder that can be used to run your own echo [`Service`],
@@ -56,7 +54,9 @@ pub struct EchoServiceBuilder<H> {
     forward: Option<ForwardKind>,
 
     #[cfg(any(feature = "rustls", feature = "boring"))]
-    tls_server_config: Option<TlsServerCertKeyPair>,
+    tls_server_config: Option<ServerConfig>,
+
+    http_version: Option<Version>,
 
     http_service_builder: H,
 }
@@ -70,6 +70,8 @@ impl Default for EchoServiceBuilder<()> {
 
             #[cfg(any(feature = "rustls", feature = "boring"))]
             tls_server_config: None,
+
+            http_version: None,
 
             http_service_builder: (),
         }
@@ -150,7 +152,7 @@ impl<H> EchoServiceBuilder<H> {
     #[cfg(any(feature = "rustls", feature = "boring"))]
     /// define a tls server cert config to be used for tls terminaton
     /// by the echo service.
-    pub fn tls_server_config(mut self, cfg: TlsServerCertKeyPair) -> Self {
+    pub fn tls_server_config(mut self, cfg: ServerConfig) -> Self {
         self.tls_server_config = Some(cfg);
         self
     }
@@ -158,7 +160,7 @@ impl<H> EchoServiceBuilder<H> {
     #[cfg(any(feature = "rustls", feature = "boring"))]
     /// define a tls server cert config to be used for tls terminaton
     /// by the echo service.
-    pub fn set_tls_server_config(&mut self, cfg: TlsServerCertKeyPair) -> &mut Self {
+    pub fn set_tls_server_config(&mut self, cfg: ServerConfig) -> &mut Self {
         self.tls_server_config = Some(cfg);
         self
     }
@@ -166,8 +168,26 @@ impl<H> EchoServiceBuilder<H> {
     #[cfg(any(feature = "rustls", feature = "boring"))]
     /// maybe define a tls server cert config to be used for tls terminaton
     /// by the echo service.
-    pub fn maybe_tls_server_config(mut self, cfg: Option<TlsServerCertKeyPair>) -> Self {
+    pub fn maybe_tls_server_config(mut self, cfg: Option<ServerConfig>) -> Self {
         self.tls_server_config = cfg;
+        self
+    }
+
+    /// set the http version to use for the http server (auto by default)
+    pub fn http_version(mut self, version: Version) -> Self {
+        self.http_version = Some(version);
+        self
+    }
+
+    /// maybe set the http version to use for the http server (auto by default)
+    pub fn maybe_http_version(mut self, version: Option<Version>) -> Self {
+        self.http_version = version;
+        self
+    }
+
+    /// set the http version to use for the http server (auto by default)
+    pub fn set_http_version(&mut self, version: Version) -> &mut Self {
+        self.http_version = Some(version);
         self
     }
 
@@ -180,6 +200,8 @@ impl<H> EchoServiceBuilder<H> {
 
             #[cfg(any(feature = "rustls", feature = "boring"))]
             tls_server_config: self.tls_server_config,
+
+            http_version: self.http_version,
 
             http_service_builder: (self.http_service_builder, layer),
         }
@@ -230,13 +252,9 @@ where
         };
 
         #[cfg(any(feature = "rustls", feature = "boring"))]
-        let tls_server_cfg = match self.tls_server_config.take() {
+        let tls_acceptor_data = match self.tls_server_config {
             None => None,
-            Some(cfg) => Some(
-                cfg.into_server_config()
-                    .map_err(OpaqueError::from_boxed)
-                    .context("build server config from env tls key/cert pair")?,
-            ),
+            Some(cfg) => Some(cfg.try_into()?),
         };
 
         let tcp_service_builder = (
@@ -248,19 +266,7 @@ where
             // Limit the body size to 1MB for requests
             BodyLimitLayer::request_only(1024 * 1024),
             #[cfg(any(feature = "rustls", feature = "boring"))]
-            tls_server_cfg.map(|cfg| {
-                #[cfg(feature = "boring")]
-                {
-                    TlsAcceptorLayer::new(std::sync::Arc::new(cfg)).with_store_client_hello(true)
-                }
-                #[cfg(not(feature = "boring"))]
-                {
-                    TlsAcceptorLayer::with_client_config_handler(
-                        std::sync::Arc::new(cfg),
-                        TlsClientConfigHandler::default().store_client_hello(),
-                    )
-                }
-            }),
+            tls_acceptor_data.map(|data| TlsAcceptorLayer::new(data).with_store_client_hello(true)),
         );
 
         let http_service = (
@@ -272,7 +278,16 @@ where
         )
             .layer(self.http_service_builder.layer(EchoService));
 
-        let http_transport_service = HttpServer::auto(executor).service(http_service);
+        let http_transport_service = match self.http_version {
+            Some(Version::HTTP_2) => Either3::A(HttpServer::h2(executor).service(http_service)),
+            Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => {
+                Either3::B(HttpServer::http1().service(http_service))
+            }
+            Some(_) => {
+                return Err(OpaqueError::from_display("unsupported http version").into_boxed())
+            }
+            None => Either3::C(HttpServer::auto(executor).service(http_service)),
+        };
 
         Ok(tcp_service_builder.layer(http_transport_service))
     }
@@ -309,22 +324,34 @@ impl Service<(), Request> for EchoService {
         let authority = request_context.authority.to_string();
         let scheme = request_context.protocol.to_string();
 
-        // TODO: get in correct order
-        // TODO: get in correct case
-        // TODO: get also pseudo headers (or separate?!)
+        let pseudo_headers: Option<Vec<_>> = req
+            .extensions()
+            .get::<PseudoHeaderOrder>()
+            .map(|o| o.iter().collect());
 
-        let headers: Vec<_> = req
-            .headers()
-            .iter()
+        let ja4h = Ja4H::compute(&req)
+            .inspect_err(|err| tracing::error!(?err, "ja4h compute failure"))
+            .ok()
+            .map(|ja4h| {
+                json!({
+                    "hash": format!("{ja4h}"),
+                    "raw": format!("{ja4h:?}"),
+                })
+            });
+
+        let (mut parts, body) = req.into_parts();
+
+        let headers: Vec<_> = Http1HeaderMap::new(parts.headers, Some(&mut parts.extensions))
+            .into_iter()
             .map(|(name, value)| {
                 (
-                    name.as_str().to_owned(),
-                    value.to_str().map(|v| v.to_owned()).unwrap_or_default(),
+                    name,
+                    std::str::from_utf8(value.as_bytes())
+                        .map(|s| s.to_owned())
+                        .unwrap_or_else(|_| format!("0x{:x?}", value.as_bytes())),
                 )
             })
             .collect();
-
-        let (parts, body) = req.into_parts();
 
         let body = body.collect().await.unwrap().to_bytes();
         let body = hex::encode(body.as_ref());
@@ -334,7 +361,30 @@ impl Service<(), Request> for EchoService {
             .get::<SecureTransport>()
             .and_then(|st| st.client_hello())
             .map(|hello| {
+                let ja4 = Ja4::compute(ctx.extensions())
+                    .inspect_err(|err| tracing::trace!(?err, "ja4 computation"))
+                    .ok()
+                    .map(|ja4| {
+                        json!({
+                            "hash": format!("{ja4}"),
+                            "raw": format!("{ja4:?}"),
+                        })
+                    });
+
+                let ja3 = Ja3::compute(ctx.extensions())
+                    .inspect_err(|err| tracing::trace!(?err, "ja3 computation"))
+                    .ok()
+                    .map(|ja3| {
+                        json!({
+                            "full": format!("{ja3}"),
+                            "hash": format!("{ja3:x}"),
+                        })
+                    });
+
                 json!({
+                    "ja4": ja4,
+                    "ja3": ja3,
+                    "version": hello.protocol_version().to_string(),
                     "cipher_suites": hello
                     .cipher_suites().iter().map(|s| s.to_string()).collect::<Vec<_>>(),
                     "compression_algorithms": hello
@@ -378,6 +428,7 @@ impl Service<(), Request> for EchoService {
         Ok(Json(json!({
             "ua": user_agent_info,
             "http": {
+                "ja4h": ja4h,
                 "version": format!("{:?}", parts.version),
                 "scheme": scheme,
                 "method": format!("{:?}", parts.method),
@@ -385,6 +436,7 @@ impl Service<(), Request> for EchoService {
                 "path": parts.uri.path().to_owned(),
                 "query": parts.uri.query().map(str::to_owned),
                 "headers": headers,
+                "pseudo_headers": pseudo_headers,
                 "payload": body,
             },
             "tls": tls_client_hello,

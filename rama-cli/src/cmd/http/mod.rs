@@ -5,9 +5,11 @@ use rama::{
     cli::args::RequestArgsBuilder,
     error::{error, BoxError, ErrorContext, OpaqueError},
     graceful::{self, Shutdown, ShutdownGuard},
-    http::client::proxy::layer::{HttpProxyAddressLayer, SetProxyAuthHttpHeaderLayer},
     http::{
-        client::HttpClient,
+        client::{
+            proxy::layer::{HttpProxyAddressLayer, SetProxyAuthHttpHeaderLayer},
+            HttpClient,
+        },
         layer::{
             auth::AddAuthorizationLayer,
             decompression::DecompressionLayer,
@@ -19,7 +21,14 @@ use rama::{
         IntoResponse, Request, Response, StatusCode,
     },
     layer::{HijackLayer, MapResultLayer},
-    net::{address::ProxyAddress, user::ProxyCredential},
+    net::{
+        address::ProxyAddress,
+        tls::{
+            client::{ClientConfig, ClientHelloExtension, ServerVerifyMode},
+            ApplicationProtocol,
+        },
+        user::ProxyCredential,
+    },
     rt::Executor,
     service::service_fn,
     Context, Layer, Service,
@@ -285,7 +294,7 @@ async fn create_client<S>(
     mut cfg: CliCommandHttp,
 ) -> Result<impl Service<S, Request, Response = Response, Error = BoxError>, BoxError>
 where
-    S: Send + Sync + 'static,
+    S: Clone + Send + Sync + 'static,
 {
     let (request_writer_mode, response_writer_mode) = if cfg.offline {
         (Some(WriterMode::All), None)
@@ -329,6 +338,30 @@ where
         response_writer_mode,
     )
     .await?;
+
+    let mut inner_client = HttpClient::default();
+
+    let server_verify_mode = if cfg.insecure {
+        Some(ServerVerifyMode::Disable)
+    } else {
+        None
+    };
+
+    inner_client.set_tls_config(ClientConfig {
+        server_verify_mode,
+        extensions: Some(vec![
+            ClientHelloExtension::ApplicationLayerProtocolNegotiation(vec![
+                ApplicationProtocol::HTTP_2,
+                ApplicationProtocol::HTTP_11,
+            ]),
+        ]),
+        ..Default::default()
+    });
+
+    inner_client.set_proxy_tls_config(ClientConfig {
+        server_verify_mode,
+        ..Default::default()
+    });
 
     let client_builder = (
         MapResultLayer::new(map_internal_client_error),
@@ -384,7 +417,7 @@ where
         HijackLayer::new(cfg.offline, service_fn(dummy_response)),
     );
 
-    Ok(client_builder.layer(HttpClient::default()))
+    Ok(client_builder.layer(inner_client))
 }
 
 fn parse_print_mode(mode: &str) -> Result<(Option<WriterMode>, Option<WriterMode>), BoxError> {

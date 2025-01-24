@@ -79,6 +79,41 @@ macro_rules! define_either {
                 }
             }
         }
+
+
+        impl<$($param),+> $id<$($param),+> {
+            /// Convert `Pin<&mut Either<A, B>>` to `Either<Pin<&mut A>, Pin<&mut B>>`,
+            /// pinned projections of the inner variants.
+            fn as_pin_mut(self: Pin<&mut Self>) -> $id<$(Pin<&mut $param>),+> {
+                // SAFETY: `get_unchecked_mut` is fine because we don't move anything.
+                // We can use `new_unchecked` because the `inner` parts are guaranteed
+                // to be pinned, as they come from `self` which is pinned, and we never
+                // offer an unpinned `&mut A` or `&mut B` through `Pin<&mut Self>`. We
+                // also don't have an implementation of `Drop`, nor manual `Unpin`.
+                unsafe {
+                    match self.get_unchecked_mut() {
+                        $(
+                            Self::$param(inner) => $id::$param(Pin::new_unchecked(inner)),
+                        )+
+                    }
+                }
+            }
+        }
+
+        impl<$($param),+, Output> std::future::Future for $id<$($param),+>
+        where
+            $($param: std::future::Future<Output = Output>),+
+        {
+            type Output = Output;
+
+            fn poll(self: Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> Poll<Self::Output> {
+                match self.as_pin_mut() {
+                    $(
+                        $id::$param(fut) => fut.poll(cx),
+                    )+
+                }
+            }
+        }
     };
 }
 
@@ -117,16 +152,16 @@ macro_rules! impl_async_read_write_either {
     ($id:ident, $($param:ident),+ $(,)?) => {
         impl<$($param),+> AsyncRead for $id<$($param),+>
         where
-            $($param: AsyncRead + Unpin),+,
+            $($param: AsyncRead),+,
         {
             fn poll_read(
-                mut self: Pin<&mut Self>,
+                self: Pin<&mut Self>,
                 cx: &mut TaskContext<'_>,
                 buf: &mut ReadBuf<'_>,
             ) -> Poll<IoResult<()>> {
-                match &mut *self {
+                match self.as_pin_mut() {
                     $(
-                        $id::$param(reader) => Pin::new(reader).poll_read(cx, buf),
+                        $id::$param(reader) => reader.poll_read(cx, buf),
                     )+
                 }
             }
@@ -134,44 +169,44 @@ macro_rules! impl_async_read_write_either {
 
         impl<$($param),+> AsyncWrite for $id<$($param),+>
         where
-            $($param: AsyncWrite + Unpin),+,
+            $($param: AsyncWrite),+,
         {
             fn poll_write(
-                mut self: Pin<&mut Self>,
+                self: Pin<&mut Self>,
                 cx: &mut TaskContext<'_>,
                 buf: &[u8],
             ) -> Poll<Result<usize, IoError>> {
-                match &mut *self {
+                match self.as_pin_mut() {
                     $(
-                        $id::$param(writer) => Pin::new(writer).poll_write(cx, buf),
+                        $id::$param(writer) => writer.poll_write(cx, buf),
                     )+
                 }
             }
 
-            fn poll_flush(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Result<(), IoError>> {
-                match &mut *self {
+            fn poll_flush(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Result<(), IoError>> {
+                match self.as_pin_mut() {
                     $(
-                        $id::$param(writer) => Pin::new(writer).poll_flush(cx),
+                        $id::$param(writer) => writer.poll_flush(cx),
                     )+
                 }
             }
 
-            fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Result<(), IoError>> {
-                match &mut *self {
+            fn poll_shutdown(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Result<(), IoError>> {
+                match self.as_pin_mut() {
                     $(
-                        $id::$param(writer) => Pin::new(writer).poll_shutdown(cx),
+                        $id::$param(writer) => writer.poll_shutdown(cx),
                     )+
                 }
             }
 
             fn poll_write_vectored(
-                mut self: Pin<&mut Self>,
+                self: Pin<&mut Self>,
                 cx: &mut TaskContext<'_>,
                 bufs: &[IoSlice<'_>],
             ) -> Poll<Result<usize, IoError>> {
-                match &mut *self {
+                match self.as_pin_mut() {
                     $(
-                        $id::$param(writer) => Pin::new(writer).poll_write_vectored(cx, bufs),
+                        $id::$param(writer) => writer.poll_write_vectored(cx, bufs),
                     )+
                 }
             }
@@ -179,7 +214,7 @@ macro_rules! impl_async_read_write_either {
             fn is_write_vectored(&self) -> bool {
                 match self {
                     $(
-                        $id::$param(reader) => reader.is_write_vectored(),
+                        $id::$param(writer) => writer.is_write_vectored(),
                     )+
                 }
             }

@@ -1,13 +1,12 @@
 #![allow(dead_code)]
 
 use rama::{
-    error::{BoxError, OpaqueError},
+    error::BoxError,
     http::client::proxy::layer::SetProxyAuthHttpHeaderLayer,
     http::service::client::{HttpClientExt, IntoUrl, RequestBuilder},
     http::{
         client::HttpClient,
         layer::{
-            decompression::DecompressionLayer,
             follow_redirect::FollowRedirectLayer,
             required_header::AddRequiredRequestHeadersLayer,
             retry::{ManagedPolicy, RetryLayer},
@@ -16,7 +15,6 @@ use rama::{
         Request, Response,
     },
     layer::MapResultLayer,
-    net::stream::Stream,
     service::BoxService,
     utils::{backoff::ExponentialBackoff, rng::HasherRng},
     Layer, Service,
@@ -26,14 +24,22 @@ use std::{
     sync::Once,
     time::Duration,
 };
-use tokio::net::ToSocketAddrs;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
 
-pub type ClientService<State> = BoxService<State, Request, Response, BoxError>;
+#[cfg(feature = "compression")]
+use rama::http::layer::decompression::DecompressionLayer;
+
+#[cfg(any(feature = "rustls", feature = "boring"))]
+use rama::net::tls::{
+    client::{ClientConfig, ClientHelloExtension, ServerVerifyMode},
+    ApplicationProtocol,
+};
+
+type ClientService<State> = BoxService<State, Request, Response, BoxError>;
 
 /// Runner for examples.
-pub struct ExampleRunner<State = ()> {
+pub(super) struct ExampleRunner<State = ()> {
     server_process: Child,
     client: ClientService<State>,
 }
@@ -45,29 +51,29 @@ pub struct ExampleRunner<State = ()> {
 static INIT_TRACING_ONCE: Once = Once::new();
 
 /// Initialize tracing for example tests
-pub fn init_tracing() {
+pub(super) fn init_tracing() {
     INIT_TRACING_ONCE.call_once(|| {
-        tracing_subscriber::registry()
+        let _ = tracing_subscriber::registry()
             .with(fmt::layer())
             .with(
                 EnvFilter::builder()
                     .with_default_directive(LevelFilter::TRACE.into())
                     .from_env_lossy(),
             )
-            .init();
+            .try_init();
     });
 }
 
 impl<State> ExampleRunner<State>
 where
-    State: Send + Sync + 'static,
+    State: Clone + Send + Sync + 'static,
 {
     /// Run an example server and create a client for it for interactive testing.
     ///
     /// # Panics
     ///
     /// This function panics if the server process cannot be spawned.
-    pub fn interactive(
+    pub(super) fn interactive(
         example_name: impl AsRef<str>,
         extra_features: Option<&'static str>,
     ) -> Self {
@@ -82,12 +88,35 @@ where
             .run()
             .unwrap()
             .command()
+            .env("SSLKEYLOGFILE", "./target/test_ssl_key_log.txt")
             .spawn()
             .unwrap();
+
+        let mut inner_client = HttpClient::default();
+
+        #[cfg(any(feature = "rustls", feature = "boring"))]
+        {
+            inner_client.set_tls_config(ClientConfig {
+                server_verify_mode: Some(ServerVerifyMode::Disable),
+                extensions: Some(vec![
+                    ClientHelloExtension::ApplicationLayerProtocolNegotiation(vec![
+                        ApplicationProtocol::HTTP_2,
+                        ApplicationProtocol::HTTP_11,
+                    ]),
+                ]),
+                ..Default::default()
+            });
+
+            inner_client.set_proxy_tls_config(ClientConfig {
+                server_verify_mode: Some(ServerVerifyMode::Disable),
+                ..Default::default()
+            });
+        }
 
         let client = (
             MapResultLayer::new(map_internal_client_error),
             TraceLayer::new_for_http(),
+            #[cfg(feature = "compression")]
             DecompressionLayer::new(),
             FollowRedirectLayer::default(),
             RetryLayer::new(
@@ -104,7 +133,7 @@ where
             AddRequiredRequestHeadersLayer::default(),
             SetProxyAuthHttpHeaderLayer::default(),
         )
-            .layer(HttpClient::default())
+            .layer(inner_client)
             .boxed();
 
         Self {
@@ -114,22 +143,31 @@ where
     }
 
     /// Create a `GET` http request to be sent to the child server.
-    pub fn get(&self, url: impl IntoUrl) -> RequestBuilder<ClientService<State>, State, Response> {
+    pub(super) fn get(
+        &self,
+        url: impl IntoUrl,
+    ) -> RequestBuilder<ClientService<State>, State, Response> {
         self.client.get(url)
     }
 
     /// Create a `HEAD` http request to be sent to the child server.
-    pub fn head(&self, url: impl IntoUrl) -> RequestBuilder<ClientService<State>, State, Response> {
+    pub(super) fn head(
+        &self,
+        url: impl IntoUrl,
+    ) -> RequestBuilder<ClientService<State>, State, Response> {
         self.client.head(url)
     }
 
     /// Create a `POST` http request to be sent to the child server.
-    pub fn post(&self, url: impl IntoUrl) -> RequestBuilder<ClientService<State>, State, Response> {
+    pub(super) fn post(
+        &self,
+        url: impl IntoUrl,
+    ) -> RequestBuilder<ClientService<State>, State, Response> {
         self.client.post(url)
     }
 
     /// Create a `DELETE` http request to be sent to the child server.
-    pub fn delete(
+    pub(super) fn delete(
         &self,
         url: impl IntoUrl,
     ) -> RequestBuilder<ClientService<State>, State, Response> {
@@ -144,7 +182,7 @@ impl ExampleRunner<()> {
     ///
     /// This function panics if the server process cannot be ran,
     /// or if it failed while waiting for it to finish.
-    pub async fn run(example_name: impl AsRef<str>) -> ExitStatus {
+    pub(super) async fn run(example_name: impl AsRef<str>) -> ExitStatus {
         let example_name = example_name.as_ref().to_owned();
         tokio::task::spawn_blocking(|| {
             escargot::CargoBuild::new()
@@ -160,13 +198,6 @@ impl ExampleRunner<()> {
         })
         .await
         .unwrap()
-    }
-
-    /// Establish an async R/W to the TCP server behind this [`ExampleRunner`].
-    pub async fn connect_tcp(&self, addr: impl ToSocketAddrs) -> Result<impl Stream, OpaqueError> {
-        tokio::net::TcpStream::connect(addr)
-            .await
-            .map_err(OpaqueError::from_std)
     }
 }
 

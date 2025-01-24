@@ -1,4 +1,4 @@
-use super::FromRequestParts;
+use super::FromRequestContextRefPair;
 use crate::dep::http::request::Parts;
 use crate::utils::macros::define_http_rejection;
 use rama_core::Context;
@@ -20,13 +20,16 @@ define_http_rejection! {
     pub struct MissingHost;
 }
 
-impl<S> FromRequestParts<S> for Host
+impl<S> FromRequestContextRefPair<S> for Host
 where
-    S: Send + Sync + 'static,
+    S: Clone + Send + Sync + 'static,
 {
     type Rejection = MissingHost;
 
-    async fn from_request_parts(ctx: &Context<S>, parts: &Parts) -> Result<Self, Self::Rejection> {
+    async fn from_request_context_ref_pair(
+        ctx: &Context<S>,
+        parts: &Parts,
+    ) -> Result<Self, Self::Rejection> {
         Ok(Host(match ctx.get::<RequestContext>() {
             Some(ctx) => ctx.authority.host().clone(),
             None => RequestContext::try_from((ctx, parts))
@@ -50,12 +53,12 @@ mod tests {
     use crate::{Body, HeaderName, Request};
     use rama_core::Service;
 
-    async fn test_host_from_request(host: &str, headers: Vec<(&HeaderName, &str)>) {
+    async fn test_host_from_request(uri: &str, host: &str, headers: Vec<(&HeaderName, &str)>) {
         let svc = GetForwardedHeadersService::x_forwarded_host(
             WebService::default().get("/", |Host(host): Host| async move { host.to_string() }),
         );
 
-        let mut builder = Request::builder().method("GET").uri("http://example.com/");
+        let mut builder = Request::builder().method("GET").uri(uri);
         for (header, value) in headers {
             builder = builder.header(header, value);
         }
@@ -70,6 +73,7 @@ mod tests {
     #[tokio::test]
     async fn host_header() {
         test_host_from_request(
+            "/",
             "some-domain",
             vec![(&http::header::HOST, "some-domain:123")],
         )
@@ -78,12 +82,18 @@ mod tests {
 
     #[tokio::test]
     async fn x_forwarded_host_header() {
-        test_host_from_request("some-domain", vec![(&X_FORWARDED_HOST, "some-domain:456")]).await;
+        test_host_from_request(
+            "/",
+            "some-domain",
+            vec![(&X_FORWARDED_HOST, "some-domain:456")],
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn x_forwarded_host_precedence_over_host_header() {
         test_host_from_request(
+            "/",
             "some-domain",
             vec![
                 (&X_FORWARDED_HOST, "some-domain:456"),
@@ -95,6 +105,6 @@ mod tests {
 
     #[tokio::test]
     async fn uri_host() {
-        test_host_from_request("example.com", vec![]).await;
+        test_host_from_request("http://example.com", "example.com", vec![]).await;
     }
 }

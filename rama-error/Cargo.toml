@@ -5,10 +5,13 @@ version = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 repository = { workspace = true }
-keywords = { workspace = true }
-categories = { workspace = true }
+keywords = ["error", "error-handling", "rama"]
+categories = ["rust-patterns"]
 authors = { workspace = true }
 rust-version = { workspace = true }
+
+[lints]
+workspace = true
 
 [dependencies]
 

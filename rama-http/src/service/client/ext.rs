@@ -205,8 +205,7 @@ impl IntoHeaderValue for &String {}
 impl IntoHeaderValue for &[u8] {}
 
 mod private {
-    use http::HeaderName;
-
+    use rama_http_types::HeaderName;
     use rama_net::Protocol;
 
     use super::*;
@@ -356,7 +355,7 @@ pub struct RequestBuilder<'a, S, State, Response> {
     _phantom: std::marker::PhantomData<fn(State, Response) -> ()>,
 }
 
-impl<'a, S, State, Response> std::fmt::Debug for RequestBuilder<'a, S, State, Response>
+impl<S, State, Response> std::fmt::Debug for RequestBuilder<'_, S, State, Response>
 where
     S: std::fmt::Debug,
 {
@@ -375,7 +374,7 @@ enum RequestBuilderState {
     Error(OpaqueError),
 }
 
-impl<'a, S, State, Body> RequestBuilder<'a, S, State, Response<Body>>
+impl<S, State, Body> RequestBuilder<'_, S, State, Response<Body>>
 where
     S: Service<State, Request, Response = Response<Body>, Error: Into<BoxError>>,
 {
@@ -649,7 +648,7 @@ where
 
 #[cfg(test)]
 mod test {
-    use http::StatusCode;
+    use rama_http_types::StatusCode;
 
     use super::*;
     use crate::{
@@ -672,7 +671,7 @@ mod test {
         request: Request<Body>,
     ) -> Result<Response, Infallible>
     where
-        S: Send + Sync + 'static,
+        S: Clone + Send + Sync + 'static,
         Body: crate::dep::http_body::Body<Data: Send + 'static, Error: Send + 'static>
             + Send
             + 'static,
@@ -705,7 +704,7 @@ mod test {
     type OpaqueError = rama_core::error::BoxError;
     type HttpClient<S> = BoxService<S, Request, Response, OpaqueError>;
 
-    fn client<S: Send + Sync + 'static>() -> HttpClient<S> {
+    fn client<S: Clone + Send + Sync + 'static>() -> HttpClient<S> {
         let builder = (
             MapResultLayer::new(map_internal_client_error),
             TraceLayer::new_for_http(),

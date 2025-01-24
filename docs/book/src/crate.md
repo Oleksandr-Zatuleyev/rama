@@ -1,6 +1,6 @@
 # 📦 Rama Crate
 
-Rama is a modular service framework distributed as a Rust crate at <https://crates.io/crates/rama/0.2.0-alpha.2>. You can add it to your project as follows:
+Rama is a modular service framework distributed as a Rust crate at <https://crates.io/crates/rama>. You can add it to your project as follows:
 
 ```
 cargo add rama
@@ -8,7 +8,7 @@ cargo add rama
 
 ## Quick Links
 
-* Crates Page: <https://crates.io/crates/rama/0.2.0-alpha.2>
+* Crates Page: <https://crates.io/crates/rama>
 * Official Docs Page (for releases): <https://docs.rs/rama>
     * Edge (main branch): <https://ramaproxy.org/docs/rama/index.html>
 * Github repo: <https://github.com/plabayo/rama>
@@ -30,14 +30,18 @@ Here is a list of all `rama` crates:
 - [`rama-core`](https://crates.io/crates/rama-core): core crate containing the service, layer and
   context used by all other `rama` code, as well as some other _core_ utilities
 - [`rama-net`](https://crates.io/crates/rama-net): rama network types and utilities
+- [`rama-dns`](https://crates.io/crates/rama-dns): DNS support for rama
 - [`rama-tcp`](https://crates.io/crates/rama-tcp): TCP support for rama
+- [`rama-udp`](https://crates.io/crates/rama-udp): UDP support for rama
 - [`rama-tls`](https://crates.io/crates/rama-tls): TLS support for rama (types, `rustls` and `boring`)
 - [`rama-proxy`](https://crates.io/crates/rama-proxy): proxy types and utilities for rama
+- [`rama-socks5`](https://crates.io/crates/rama-socks5): SOCKS5 support for rama
 - [`rama-haproxy`](https://crates.io/crates/rama-haproxy): rama HaProxy support
 - [`rama-ua`](https://crates.io/crates/rama-ua): User-Agent (UA) support for `rama`
 - [`rama-http-types`](https://crates.io/crates/rama-http-types): http types and utilities
 - [`rama-http`](https://crates.io/crates/rama-http): rama http services, layers and utilities
 - [`rama-http-backend`](https://crates.io/crates/rama-http-backend): default http backend for `rama`
+- [`rama-http-core`](https://crates.io/crates/rama-http-core): http protocol implementation driving `rama-http-backend`
 
 ## Examples
 
@@ -47,7 +51,8 @@ to know how to use rama for your purposes.
 
 ## ⛨ | Safety
 
-This crate uses `#![forbid(unsafe_code)]` to ensure everything is implemented in 100% safe Rust.
+The rama crates avoid `unsafe_code`, but do make use of it for some low level primitives (e.g. http core)
+or indirectly because of bindgens to C (e.g. boring).
 
 We also make use of [`cargo vet`](https://github.com/mozilla/cargo-vet) to
 [audit our supply chain](https://github.com/plabayo/rama/tree/main/supply-chain/).
@@ -68,7 +73,7 @@ support as many as we reasonably can.
 
 ### Minimum supported Rust version
 
-Rama's MSRV is `1.80`.
+Rama's MSRV is `1.84`.
 
 [Using GitHub Actions we also test](https://github.com/plabayo/rama/blob/main/.github/workflows/CI.yml) if `rama` on that version still works on
 the stable and beta versions of _rust_ as well.

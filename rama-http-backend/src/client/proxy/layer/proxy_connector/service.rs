@@ -1,8 +1,12 @@
+use crate::client::proxy::layer::HttpProxyError;
+
 use super::InnerHttpProxyConnector;
 use rama_core::{
+    combinators::Either,
     error::{BoxError, ErrorExt, OpaqueError},
     Context, Service,
 };
+use rama_http_core::upgrade;
 use rama_http_types::headers::ProxyAuthorization;
 use rama_net::{
     address::ProxyAddress,
@@ -15,7 +19,7 @@ use rama_utils::macros::define_inner_service_accessors;
 use std::fmt;
 
 #[cfg(feature = "tls")]
-use rama_net::tls::HttpsTunnel;
+use rama_net::tls::TlsTunnel;
 
 /// A connector which can be used to establish a connection over an HTTP Proxy.
 ///
@@ -70,12 +74,13 @@ impl<S> HttpProxyConnector<S> {
 impl<S, State, Request> Service<State, Request> for HttpProxyConnector<S>
 where
     S: ConnectorService<State, Request, Connection: Stream + Unpin, Error: Into<BoxError>>,
-    State: Send + Sync + 'static,
+    State: Clone + Send + Sync + 'static,
     Request: TryRefIntoTransportContext<State, Error: Into<BoxError> + Send + Sync + 'static>
         + Send
         + 'static,
 {
-    type Response = EstablishedClientConnection<S::Connection, State, Request>;
+    type Response =
+        EstablishedClientConnection<Either<S::Connection, upgrade::Upgraded>, State, Request>;
     type Error = BoxError;
 
     async fn serve(
@@ -108,8 +113,8 @@ where
                     authority = %transport_ctx.authority,
                     "http proxy connector: preparing proxy connection for tls tunnel"
                 );
-                ctx.insert(HttpsTunnel {
-                    server_name: address.authority.host().to_string(),
+                ctx.insert(TlsTunnel {
+                    server_host: address.authority.host().clone(),
                 });
             }
         }
@@ -119,8 +124,14 @@ where
                 .connect(ctx, req)
                 .await
                 .map_err(|err| match address.as_ref() {
-                    Some(address) => OpaqueError::from_boxed(err.into())
-                        .context(format!("establish connection to proxy {}", address)),
+                    Some(address) => OpaqueError::from_std(HttpProxyError::Transport(
+                        OpaqueError::from_boxed(err.into())
+                            .context(format!(
+                                "establish connection to proxy {} (protocol: {:?})",
+                                address.authority, address.protocol,
+                            ))
+                            .into_boxed(),
+                    )),
                     None => {
                         OpaqueError::from_boxed(err.into()).context("establish connection target")
                     }
@@ -134,7 +145,18 @@ where
                     Err("http proxy required but none is defined".into())
                 } else {
                     tracing::trace!("http proxy connector: no proxy required or set: proceed with direct connection");
-                    Ok(established_conn)
+                    let EstablishedClientConnection {
+                        ctx,
+                        req,
+                        conn,
+                        addr,
+                    } = established_conn;
+                    return Ok(EstablishedClientConnection {
+                        ctx,
+                        req,
+                        conn: Either::A(conn),
+                        addr,
+                    });
                 };
             }
         };
@@ -165,12 +187,13 @@ where
             return Ok(EstablishedClientConnection {
                 ctx,
                 req,
-                conn,
+                conn: Either::A(conn),
                 addr,
             });
         }
 
-        let mut connector = InnerHttpProxyConnector::new(transport_ctx.authority.clone());
+        let mut connector = InnerHttpProxyConnector::new(transport_ctx.authority.clone())?;
+
         if let Some(credential) = address.credential.clone() {
             match credential {
                 ProxyCredential::Basic(basic) => {
@@ -195,7 +218,7 @@ where
         Ok(EstablishedClientConnection {
             ctx,
             req,
-            conn,
+            conn: Either::B(conn),
             addr,
         })
     }

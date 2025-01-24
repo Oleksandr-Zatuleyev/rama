@@ -61,7 +61,7 @@ where
 
     async fn get_proxy_if(
         &self,
-        ctx: rama_net::transport::TransportContext,
+        ctx: super::ProxyContext,
         filter: super::ProxyFilter,
         predicate: impl super::ProxyQueryPredicate,
     ) -> Result<super::Proxy, Self::Error> {
@@ -79,7 +79,7 @@ where
 
     async fn get_proxy(
         &self,
-        ctx: rama_net::transport::TransportContext,
+        ctx: super::ProxyContext,
         filter: super::ProxyFilter,
     ) -> Result<super::Proxy, Self::Error> {
         match self.0.load().deref().deref() {
@@ -118,11 +118,8 @@ impl<T: fmt::Debug> fmt::Debug for LiveUpdateProxyDBSetter<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::{Proxy, ProxyFilter};
-    use rama_net::{
-        asn::Asn,
-        transport::{TransportContext, TransportProtocol},
-    };
+    use crate::{proxydb::ProxyContext, Proxy, ProxyFilter};
+    use rama_net::{asn::Asn, transport::TransportProtocol};
     use rama_utils::str::NonEmptyString;
 
     use super::*;
@@ -132,11 +129,8 @@ mod tests {
         let (reader, _) = proxy_db_updater::<Proxy>();
         assert!(reader
             .get_proxy(
-                TransportContext {
+                ProxyContext {
                     protocol: TransportProtocol::Tcp,
-                    app_protocol: None,
-                    http_version: None,
-                    authority: "proxy.example.com:1080".parse().unwrap(),
                 },
                 ProxyFilter::default(),
             )
@@ -150,11 +144,8 @@ mod tests {
 
         assert!(reader
             .get_proxy(
-                TransportContext {
+                ProxyContext {
                     protocol: TransportProtocol::Tcp,
-                    app_protocol: None,
-                    http_version: None,
-                    authority: "proxy.example.com:1080".parse().unwrap(),
                 },
                 ProxyFilter::default(),
             )
@@ -186,11 +177,8 @@ mod tests {
             "id",
             reader
                 .get_proxy(
-                    TransportContext {
+                    ProxyContext {
                         protocol: TransportProtocol::Tcp,
-                        app_protocol: None,
-                        http_version: None,
-                        authority: "proxy.example.com:1080".parse().unwrap(),
                     },
                     ProxyFilter::default(),
                 )
@@ -201,11 +189,8 @@ mod tests {
 
         assert!(reader
             .get_proxy(
-                TransportContext {
+                ProxyContext {
                     protocol: TransportProtocol::Udp,
-                    app_protocol: None,
-                    http_version: None,
-                    authority: "proxy.example.com:1080".parse().unwrap(),
                 },
                 ProxyFilter::default(),
             )
@@ -216,11 +201,8 @@ mod tests {
             "id",
             reader
                 .get_proxy(
-                    TransportContext {
+                    ProxyContext {
                         protocol: TransportProtocol::Tcp,
-                        app_protocol: None,
-                        http_version: None,
-                        authority: "proxy.example.com:1080".parse().unwrap(),
                     },
                     ProxyFilter::default(),
                 )

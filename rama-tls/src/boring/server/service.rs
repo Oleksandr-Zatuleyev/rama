@@ -1,34 +1,40 @@
-use super::ServerConfig;
+use super::TlsAcceptorData;
 use crate::{
     boring::dep::{
-        boring::ssl::{SslAcceptor, SslMethod},
+        boring::ssl::{AlpnError, SslAcceptor, SslMethod, SslRef},
         tokio_boring::SslStream,
     },
-    types::client::ClientHello,
-    types::SecureTransport,
+    keylog::new_key_log_file_handle,
+    types::{client::ClientHello, SecureTransport},
 };
 use parking_lot::Mutex;
 use rama_core::{
-    error::{ErrorContext, ErrorExt, OpaqueError},
+    error::{BoxError, ErrorContext, ErrorExt, OpaqueError},
     Context, Service,
 };
-use rama_net::stream::Stream;
+use rama_net::{
+    http::RequestContext,
+    stream::Stream,
+    tls::{client::NegotiatedTlsParameters, ApplicationProtocol, DataEncoding},
+    transport::TransportContext,
+};
 use rama_utils::macros::define_inner_service_accessors;
-use std::{fmt, sync::Arc};
+use std::{io::ErrorKind, sync::Arc};
+use tracing::{debug, trace};
 
 /// A [`Service`] which accepts TLS connections and delegates the underlying transport
 /// stream to the given service.
 pub struct TlsAcceptorService<S> {
-    config: Arc<ServerConfig>,
+    data: TlsAcceptorData,
     store_client_hello: bool,
     inner: S,
 }
 
 impl<S> TlsAcceptorService<S> {
     /// Creates a new [`TlsAcceptorService`].
-    pub const fn new(config: Arc<ServerConfig>, inner: S, store_client_hello: bool) -> Self {
+    pub const fn new(data: TlsAcceptorData, inner: S, store_client_hello: bool) -> Self {
         Self {
-            config,
+            data,
             store_client_hello,
             inner,
         }
@@ -40,7 +46,7 @@ impl<S> TlsAcceptorService<S> {
 impl<S: std::fmt::Debug> std::fmt::Debug for TlsAcceptorService<S> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TlsAcceptorService")
-            .field("config", &self.config)
+            .field("data", &self.data)
             .field("store_client_hello", &self.store_client_hello)
             .field("inner", &self.inner)
             .finish()
@@ -53,7 +59,7 @@ where
 {
     fn clone(&self) -> Self {
         Self {
-            config: self.config.clone(),
+            data: self.data.clone(),
             store_client_hello: self.store_client_hello,
             inner: self.inner.clone(),
         }
@@ -64,45 +70,64 @@ impl<T, S, IO> Service<T, IO> for TlsAcceptorService<S>
 where
     T: Send + Sync + 'static,
     IO: Stream + Unpin + 'static,
-    S: Service<T, SslStream<IO>>,
+    S: Service<T, SslStream<IO>, Error: Into<BoxError>>,
 {
     type Response = S::Response;
-    type Error = TlsAcceptorError<S::Error>;
+    type Error = BoxError;
 
     async fn serve(&self, mut ctx: Context<T>, stream: IO) -> Result<Self::Response, Self::Error> {
-        // let acceptor = TlsAcceptor::from(self.config.clone());
+        // allow tls acceptor data to be injected,
+        // e.g. useful for TLS environments where some data (such as server auth, think ACME)
+        // is updated at runtime, be it infrequent
+        let tls_config = &ctx.get::<TlsAcceptorData>().unwrap_or(&self.data).config;
 
         let mut acceptor_builder = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls_server())
-            .context("create boring ssl acceptor")
-            .map_err(TlsAcceptorError::Accept)?;
+            .context("create boring ssl acceptor")?;
 
         acceptor_builder.set_grease_enabled(true);
         acceptor_builder
             .set_default_verify_paths()
-            .context("build boring ssl acceptor: set default verify paths")
-            .map_err(TlsAcceptorError::Accept)?;
+            .context("build boring ssl acceptor: set default verify paths")?;
 
-        for (i, ca_cert) in self.config.ca_cert_chain.iter().enumerate() {
-            if i == 0 {
-                acceptor_builder
-                    .set_certificate(ca_cert.as_ref())
-                    .context("build boring ssl acceptor: set Leaf CA certificate (x509)")
-                    .map_err(TlsAcceptorError::Accept)?;
-            } else {
-                acceptor_builder
-                    .add_extra_chain_cert(ca_cert.clone())
-                    .context("build boring ssl acceptor: add extra chain certificate (x509)")
-                    .map_err(TlsAcceptorError::Accept)?;
-            }
+        let server_host = ctx
+            .get::<SecureTransport>()
+            .and_then(|t| t.client_hello())
+            .and_then(|c| c.ext_server_name())
+            .or_else(|| {
+                ctx.get::<TransportContext>()
+                    .map(|ctx| ctx.authority.host())
+            })
+            .or_else(|| ctx.get::<RequestContext>().map(|ctx| ctx.authority.host()));
+
+        let mut acceptor_builder = tls_config
+            .cert_source
+            .clone()
+            .issue_certs(acceptor_builder, server_host.cloned())
+            .await?;
+
+        if let Some(min_ver) = tls_config.protocol_versions.iter().flatten().min() {
+            acceptor_builder
+                .set_min_proto_version(Some((*min_ver).try_into().map_err(|v| {
+                    OpaqueError::from_display(format!("protocol version {v}"))
+                        .context("build boring ssl acceptor: min proto version")
+                })?))
+                .context("build boring ssl acceptor: set min proto version")?;
         }
-        acceptor_builder
-            .set_private_key(self.config.private_key.as_ref())
-            .context("build boring ssl acceptor: set private key")
-            .map_err(TlsAcceptorError::Accept)?;
-        acceptor_builder
-            .check_private_key()
-            .context("build boring ssl acceptor: check private key")
-            .map_err(TlsAcceptorError::Accept)?;
+
+        if let Some(max_ver) = tls_config.protocol_versions.iter().flatten().max() {
+            acceptor_builder
+                .set_max_proto_version(Some((*max_ver).try_into().map_err(|v| {
+                    OpaqueError::from_display(format!("protocol version {v}"))
+                        .context("build boring ssl acceptor: max proto version")
+                })?))
+                .context("build boring ssl acceptor: set max proto version")?;
+        }
+
+        for ca_cert in tls_config.client_cert_chain.iter().flatten() {
+            acceptor_builder
+                .add_client_ca(ca_cert)
+                .context("build boring ssl acceptor: set ca client cert")?;
+        }
 
         let mut maybe_client_hello = if self.store_client_hello {
             let maybe_client_hello = Arc::new(Mutex::new(None));
@@ -123,32 +148,46 @@ where
             None
         };
 
-        if !self.config.alpn_protocols.is_empty() {
-            let mut buf = vec![];
-            for alpn in &self.config.alpn_protocols {
-                alpn.encode_wire_format(&mut buf)
-                    .context("build boring ssl acceptor: encode alpn")
-                    .map_err(TlsAcceptorError::Accept)?;
-            }
-            acceptor_builder
-                .set_alpn_protos(&buf[..])
-                .context("build boring ssl acceptor: set alpn")
-                .map_err(TlsAcceptorError::Accept)?;
+        if let Some(alpn_protocols) = tls_config.alpn_protocols.clone() {
+            trace!("tls boring server service: set alpn protos callback");
+            acceptor_builder.set_alpn_select_callback(
+                move |_: &mut SslRef, client_alpns: &[u8]| {
+                    let mut reader = std::io::Cursor::new(client_alpns);
+                    loop {
+                        let n = reader.position() as usize;
+                        match ApplicationProtocol::decode_wire_format(&mut reader) {
+                            Ok(proto) => {
+                                if alpn_protocols.contains(&proto) {
+                                    let m = reader.position() as usize;
+                                    return Ok(&client_alpns[n+1..m]);
+                                }
+                            }
+                            Err(error) => {
+                                return Err(if error.kind() == ErrorKind::UnexpectedEof {
+                                    trace!(
+                                        %error,
+                                        "tls boring server service: alpn protos callback: no compatible ALPN found",
+                                    );
+                                    AlpnError::NOACK
+                                } else {
+                                    debug!(
+                                        %error,
+                                        "tls boring server service: alpn protos callback: client ALPN decode error",
+                                    );
+                                    AlpnError::ALERT_FATAL
+                                })
+                            }
+                        }
+                    }
+                },
+            );
         }
 
-        if let Some(keylog_filename) = &self.config.keylog_filename {
-            // open file in append mode and write keylog to it with callback
-            let file = std::fs::OpenOptions::new()
-                .append(true)
-                .create(true)
-                .open(keylog_filename)
-                .context("build boring ssl acceptor: set keylog: open file")
-                .map_err(TlsAcceptorError::Accept)?;
+        if let Some(keylog_filename) = tls_config.keylog_intent.file_path() {
+            let handle = new_key_log_file_handle(keylog_filename)?;
             acceptor_builder.set_keylog_callback(move |_, line| {
-                use std::io::Write;
                 let line = format!("{}\n", line);
-                let mut file = &file;
-                let _ = file.write_all(line.as_bytes());
+                handle.write_log_line(line);
             });
         }
 
@@ -159,9 +198,61 @@ where
             .map_err(|err| match err.as_io_error() {
                 Some(err) => OpaqueError::from_display(err.to_string())
                     .context("boring ssl acceptor: accept"),
-                None => OpaqueError::from_display("boring ssl acceptor: accept"),
-            })
-            .map_err(TlsAcceptorError::Accept)?;
+                None => OpaqueError::from_display(format!(
+                    "boring ssl acceptor: accept ({:?})",
+                    err.code()
+                )),
+            })?;
+
+        match stream.ssl().session() {
+            Some(ssl_session) => {
+                let protocol_version = ssl_session.protocol_version().try_into().map_err(|v| {
+                    OpaqueError::from_display(format!("protocol version {v}"))
+                        .context("boring ssl acceptor: min proto version")
+                })?;
+                let application_layer_protocol = stream
+                    .ssl()
+                    .selected_alpn_protocol()
+                    .map(ApplicationProtocol::from);
+
+                let client_certificate_chain = if let Some(certificate) = tls_config
+                    .store_client_certificate_chain
+                    .then(|| stream.ssl().peer_certificate())
+                    .flatten()
+                {
+                    // peer_cert_chain doesn't contain the leaf certificate in a server ctx
+                    let mut chain = stream.ssl().peer_cert_chain().map_or(Ok(vec![]), |chain| {
+                        chain
+                            .into_iter()
+                            .map(|cert| {
+                                cert.to_der()
+                                    .context("boring ssl session: failed to convert peer certificates to der")
+                            })
+                            .collect::<Result<Vec<Vec<u8>>, _>>()
+                    })?;
+
+                    let certificate = certificate
+                        .to_der()
+                        .context("boring ssl session: failed to convert peer certificate to der")?;
+                    chain.insert(0, certificate);
+                    Some(DataEncoding::DerStack(chain))
+                } else {
+                    None
+                };
+
+                ctx.insert(NegotiatedTlsParameters {
+                    protocol_version,
+                    application_layer_protocol,
+                    peer_certificate_chain: client_certificate_chain,
+                });
+            }
+            None => {
+                return Err(OpaqueError::from_display(
+                    "boring ssl acceptor: failed to establish session...",
+                )
+                .into_boxed())
+            }
+        }
 
         let secure_transport = maybe_client_hello
             .take()
@@ -170,51 +261,10 @@ where
             .unwrap_or_default();
         ctx.insert(secure_transport);
 
-        self.inner
-            .serve(ctx, stream)
-            .await
-            .map_err(TlsAcceptorError::Service)
-    }
-}
-
-/// Errors that can happen when using [`TlsAcceptorService`].
-pub enum TlsAcceptorError<E> {
-    /// An error occurred while accepting a TLS connection.
-    Accept(OpaqueError),
-    /// An error occurred while serving the underlying transport stream
-    /// using the inner service.
-    Service(E),
-}
-
-impl<E: fmt::Debug> fmt::Debug for TlsAcceptorError<E> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Accept(err) => write!(f, "TlsAcceptorError::Accept({err:?})"),
-            Self::Service(err) => write!(f, "TlsAcceptorError::Service({err:?})"),
-        }
-    }
-}
-
-impl<E> std::fmt::Display for TlsAcceptorError<E>
-where
-    E: std::fmt::Display,
-{
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            TlsAcceptorError::Accept(e) => write!(f, "accept error: {}", e),
-            TlsAcceptorError::Service(e) => write!(f, "service error: {}", e),
-        }
-    }
-}
-
-impl<E> std::error::Error for TlsAcceptorError<E>
-where
-    E: std::fmt::Debug + std::fmt::Display,
-{
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            TlsAcceptorError::Accept(e) => Some(e),
-            TlsAcceptorError::Service(_) => None,
-        }
+        self.inner.serve(ctx, stream).await.map_err(|err| {
+            OpaqueError::from_boxed(err.into())
+                .context("boring acceptor: service error")
+                .into_boxed()
+        })
     }
 }

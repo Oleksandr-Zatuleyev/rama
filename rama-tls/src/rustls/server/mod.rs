@@ -15,12 +15,12 @@
 
 mod service;
 #[doc(inline)]
-pub use service::{TlsAcceptorError, TlsAcceptorService};
-
-mod client_config;
-#[doc(inline)]
-pub use client_config::{ServerConfigProvider, TlsClientConfigHandler};
+pub use service::TlsAcceptorService;
 
 mod layer;
 #[doc(inline)]
 pub use layer::TlsAcceptorLayer;
+
+mod acceptor_data;
+#[doc(inline)]
+pub use acceptor_data::TlsAcceptorData;

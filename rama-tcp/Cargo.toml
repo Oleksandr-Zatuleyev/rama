@@ -5,20 +5,24 @@ version = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 repository = { workspace = true }
-keywords = { workspace = true }
-categories = { workspace = true }
+keywords = ["io", "async", "tcp", "network", "rama"]
+categories = ["asynchronous", "network-programming", "web-programming"]
 authors = { workspace = true }
 rust-version = { workspace = true }
+
+[lints]
+workspace = true
 
 [features]
 default = []
 http = ["dep:rama-http-types", "rama-net/http"]
 
 [dependencies]
-rama-core = { version = "0.2.0-alpha.3", path = "../rama-core" }
-rama-http-types = { version = "0.2.0-alpha.3", path = "../rama-http-types", optional = true }
-rama-net = { version = "0.2.0-alpha.3", path = "../rama-net" }
-rama-utils = { version = "0.2.0-alpha.3", path = "../rama-utils" }
+rama-core = { version = "0.2.0-alpha.7", path = "../rama-core" }
+rama-dns = { version = "0.2.0-alpha.7", path = "../rama-dns" }
+rama-http-types = { version = "0.2.0-alpha.7", path = "../rama-http-types", optional = true }
+rama-net = { version = "0.2.0-alpha.7", path = "../rama-net" }
+rama-utils = { version = "0.2.0-alpha.7", path = "../rama-utils" }
 tokio = { workspace = true, features = ["macros", "net"] }
 tracing = { workspace = true }
 

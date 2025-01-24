@@ -33,7 +33,7 @@ pub trait Service<S, Request>: Sized + Send + Sync + 'static {
 
 impl<S, Request> Service<S, Request> for ()
 where
-    S: Send + Sync + 'static,
+    S: Clone + Send + Sync + 'static,
     Request: Send + 'static,
 {
     type Response = Request;
@@ -58,6 +58,23 @@ where
         req: Request,
     ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send + '_ {
         self.as_ref().serve(ctx, req)
+    }
+}
+
+impl<S, State, Request> Service<State, Request> for &'static S
+where
+    S: Service<State, Request>,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+
+    #[inline]
+    fn serve(
+        &self,
+        ctx: Context<State>,
+        req: Request,
+    ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send + '_ {
+        (**self).serve(ctx, req)
     }
 }
 
@@ -162,7 +179,7 @@ macro_rules! impl_service_either {
                 $param: Service<State, Request, Response = Response, Error: Into<BoxError>>,
             )+
             Request: Send + 'static,
-            State: Send + Sync + 'static,
+            State: Clone + Send + Sync + 'static,
             Response: Send + 'static,
         {
             type Response = Response;

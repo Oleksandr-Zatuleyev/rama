@@ -5,10 +5,13 @@ version = { workspace = true }
 license = { workspace = true }
 edition = { workspace = true }
 repository = { workspace = true }
-keywords = { workspace = true }
-categories = { workspace = true }
+keywords = ["io", "async", "proxy", "http", "rama"]
+categories = ["asynchronous", "network-programming", "web-programming"]
 authors = { workspace = true }
 rust-version = { workspace = true }
+
+[lints]
+workspace = true
 
 [features]
 default = []
@@ -27,6 +30,7 @@ async-compression = { workspace = true, features = [
 base64 = { workspace = true }
 bitflags = { workspace = true }
 bytes = { workspace = true }
+const_format = { workspace = true }
 futures-lite = { workspace = true }
 headers = { workspace = true }
 http = { workspace = true }
@@ -39,14 +43,15 @@ keyed_priority_queue = { workspace = true }
 lru = { workspace = true }
 mime = { workspace = true }
 mime_guess = { workspace = true }
+nanoid = { workspace = true }
 paste = { workspace = true }
 percent-encoding = { workspace = true }
 pin-project-lite = { workspace = true }
-rama-core = { version = "0.2.0-alpha.3", path = "../rama-core" }
-rama-http-types = { version = "0.2.0-alpha.3", path = "../rama-http-types" }
-rama-net = { version = "0.2.0-alpha.3", path = "../rama-net", features = ["http"] }
-rama-ua = { version = "0.2.0-alpha.3", path = "../rama-ua" }
-rama-utils = { version = "0.2.0-alpha.3", path = "../rama-utils" }
+rama-core = { version = "0.2.0-alpha.7", path = "../rama-core" }
+rama-http-types = { version = "0.2.0-alpha.7", path = "../rama-http-types" }
+rama-net = { version = "0.2.0-alpha.7", path = "../rama-net", features = ["http"] }
+rama-ua = { version = "0.2.0-alpha.7", path = "../rama-ua" }
+rama-utils = { version = "0.2.0-alpha.7", path = "../rama-utils" }
 regex = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_html_form = { workspace = true }
@@ -62,8 +67,8 @@ brotli = { workspace = true }
 flate2 = { workspace = true }
 itertools = { workspace = true }
 parking_lot = { workspace = true }
-rama-http-backend = { version = "0.2.0-alpha.3", path = "../rama-http-backend" }
-rama-tcp = { version = "0.2.0-alpha.3", path = "../rama-tcp" }
+rama-http-backend = { version = "0.2.0-alpha.7", path = "../rama-http-backend" }
+rama-tcp = { version = "0.2.0-alpha.7", path = "../rama-tcp" }
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tokio-test = { workspace = true }

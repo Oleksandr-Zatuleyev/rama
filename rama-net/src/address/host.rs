@@ -1,8 +1,8 @@
-use super::Domain;
+use super::{parse_utils, Domain};
 use rama_core::error::{ErrorContext, OpaqueError};
 use std::{
     fmt,
-    net::{IpAddr, Ipv6Addr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr},
 };
 
 #[cfg(feature = "http")]
@@ -16,6 +16,30 @@ pub enum Host {
 
     /// An IP address.
     Address(IpAddr),
+}
+
+impl Host {
+    /// Local loopback address (IPv4)
+    pub const LOCALHOST_IPV4: Self = Self::Address(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+
+    /// Local loopback address (IPv6)
+    pub const LOCALHOST_IPV6: Self =
+        Self::Address(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)));
+
+    /// Local loopback name
+    pub const LOCALHOST_NAME: Self = Self::Name(Domain::from_static("localhost"));
+
+    /// Default address, not routable
+    pub const DEFAULT_IPV4: Self = Self::Address(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)));
+
+    /// Default address, not routable (IPv6)
+    pub const DEFAULT_IPV6: Self = Self::Address(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0)));
+
+    /// Broadcast address (IPv4)
+    pub const BROADCAST_IPV4: Self = Self::Address(IpAddr::V4(Ipv4Addr::new(255, 255, 255, 255)));
+
+    /// `example.com` domain name
+    pub const EXAMPLE_NAME: Self = Self::Name(Domain::from_static("example.com"));
 }
 
 impl PartialEq<str> for Host {
@@ -57,6 +81,57 @@ impl PartialEq<Host> for String {
     }
 }
 
+impl PartialEq<Ipv4Addr> for Host {
+    fn eq(&self, other: &Ipv4Addr) -> bool {
+        match self {
+            Self::Name(_) => false,
+            Self::Address(ip) => match ip {
+                IpAddr::V4(ip) => ip == other,
+                IpAddr::V6(ip) => ip.to_ipv4().map(|ip| ip == *other).unwrap_or_default(),
+            },
+        }
+    }
+}
+
+impl PartialEq<Host> for Ipv4Addr {
+    fn eq(&self, other: &Host) -> bool {
+        other == self
+    }
+}
+
+impl PartialEq<Ipv6Addr> for Host {
+    fn eq(&self, other: &Ipv6Addr) -> bool {
+        match self {
+            Self::Name(_) => false,
+            Self::Address(ip) => match ip {
+                IpAddr::V4(ip) => ip.to_ipv6_mapped() == *other,
+                IpAddr::V6(ip) => ip == other,
+            },
+        }
+    }
+}
+
+impl PartialEq<Host> for Ipv6Addr {
+    fn eq(&self, other: &Host) -> bool {
+        other == self
+    }
+}
+
+impl PartialEq<IpAddr> for Host {
+    fn eq(&self, other: &IpAddr) -> bool {
+        match other {
+            IpAddr::V4(ip) => self == ip,
+            IpAddr::V6(ip) => self == ip,
+        }
+    }
+}
+
+impl PartialEq<Host> for IpAddr {
+    fn eq(&self, other: &Host) -> bool {
+        other == self
+    }
+}
+
 impl From<Domain> for Host {
     fn from(domain: Domain) -> Self {
         Host::Name(domain)
@@ -66,6 +141,18 @@ impl From<Domain> for Host {
 impl From<IpAddr> for Host {
     fn from(ip: IpAddr) -> Self {
         Host::Address(ip)
+    }
+}
+
+impl From<Ipv4Addr> for Host {
+    fn from(ip: Ipv4Addr) -> Self {
+        Host::Address(IpAddr::V4(ip))
+    }
+}
+
+impl From<Ipv6Addr> for Host {
+    fn from(ip: Ipv6Addr) -> Self {
+        Host::Address(IpAddr::V6(ip))
     }
 }
 
@@ -90,7 +177,7 @@ impl TryFrom<String> for Host {
     type Error = OpaqueError;
 
     fn try_from(name: String) -> Result<Self, Self::Error> {
-        try_to_parse_str_to_ip(name.as_str())
+        parse_utils::try_to_parse_str_to_ip(name.as_str())
             .map(Host::Address)
             .or_else(|| Domain::try_from(name).ok().map(Host::Name))
             .context("parse host from string")
@@ -101,7 +188,7 @@ impl TryFrom<&str> for Host {
     type Error = OpaqueError;
 
     fn try_from(name: &str) -> Result<Self, Self::Error> {
-        try_to_parse_str_to_ip(name)
+        parse_utils::try_to_parse_str_to_ip(name)
             .map(Host::Address)
             .or_else(|| Domain::try_from(name.to_owned()).ok().map(Host::Name))
             .context("parse host from string")
@@ -123,6 +210,70 @@ impl TryFrom<&HeaderValue> for Host {
 
     fn try_from(header: &HeaderValue) -> Result<Self, Self::Error> {
         header.to_str().context("convert header to str")?.try_into()
+    }
+}
+
+#[cfg(feature = "rustls")]
+impl<'a> TryFrom<rustls::pki_types::ServerName<'a>> for Host {
+    type Error = OpaqueError;
+
+    fn try_from(value: rustls::pki_types::ServerName<'a>) -> Result<Self, Self::Error> {
+        match value {
+            rustls::pki_types::ServerName::DnsName(name) => {
+                Ok(Domain::try_from(name.as_ref().to_owned())?.into())
+            }
+            rustls::pki_types::ServerName::IpAddress(ip) => Ok(Host::from(IpAddr::from(ip))),
+            _ => Err(OpaqueError::from_display(format!(
+                "urecognised rustls (PKI) server name: {value:?}",
+            ))),
+        }
+    }
+}
+
+#[cfg(feature = "rustls")]
+impl TryFrom<Host> for rustls::pki_types::ServerName<'_> {
+    type Error = OpaqueError;
+
+    fn try_from(value: Host) -> Result<Self, Self::Error> {
+        match value {
+            Host::Name(name) => Ok(rustls::pki_types::ServerName::DnsName(
+                rustls::pki_types::DnsName::try_from(name.as_str().to_owned())
+                    .context("convert domain to rustls (PKI) ServerName")?,
+            )),
+            Host::Address(ip) => Ok(rustls::pki_types::ServerName::IpAddress(ip.into())),
+        }
+    }
+}
+
+#[cfg(feature = "rustls")]
+impl<'a> TryFrom<&rustls::pki_types::ServerName<'a>> for Host {
+    type Error = OpaqueError;
+
+    fn try_from(value: &rustls::pki_types::ServerName<'a>) -> Result<Self, Self::Error> {
+        match value {
+            rustls::pki_types::ServerName::DnsName(name) => {
+                Ok(Domain::try_from(name.as_ref().to_owned())?.into())
+            }
+            rustls::pki_types::ServerName::IpAddress(ip) => Ok(Host::from(IpAddr::from(*ip))),
+            _ => Err(OpaqueError::from_display(format!(
+                "urecognised rustls (PKI) server name: {value:?}",
+            ))),
+        }
+    }
+}
+
+#[cfg(feature = "rustls")]
+impl<'a> TryFrom<&'a Host> for rustls::pki_types::ServerName<'a> {
+    type Error = OpaqueError;
+
+    fn try_from(value: &'a Host) -> Result<Self, Self::Error> {
+        match value {
+            Host::Name(name) => Ok(rustls::pki_types::ServerName::DnsName(
+                rustls::pki_types::DnsName::try_from(name.as_str())
+                    .context("convert domain to rustls (PKI) ServerName")?,
+            )),
+            Host::Address(ip) => Ok(rustls::pki_types::ServerName::IpAddress((*ip).into())),
+        }
     }
 }
 
@@ -163,26 +314,15 @@ impl<'de> serde::Deserialize<'de> for Host {
     where
         D: serde::Deserializer<'de>,
     {
-        let s = String::deserialize(deserializer)?;
-        s.try_into().map_err(serde::de::Error::custom)
-    }
-}
-
-fn try_to_parse_str_to_ip(value: &str) -> Option<IpAddr> {
-    if value.starts_with('[') || value.ends_with(']') {
-        let value = value
-            .strip_prefix('[')
-            .and_then(|value| value.strip_suffix(']'))?;
-        Some(IpAddr::V6(value.parse::<Ipv6Addr>().ok()?))
-    } else {
-        value.parse::<IpAddr>().ok()
+        let s = <std::borrow::Cow<'de, str>>::deserialize(deserializer)?;
+        s.parse().map_err(serde::de::Error::custom)
     }
 }
 
 fn try_to_parse_bytes_to_ip(value: &[u8]) -> Option<IpAddr> {
     if let Some(ip) = std::str::from_utf8(value)
         .ok()
-        .and_then(try_to_parse_str_to_ip)
+        .and_then(parse_utils::try_to_parse_str_to_ip)
     {
         return Some(ip);
     }
@@ -342,6 +482,86 @@ mod tests {
         ] {
             assert!(Host::try_from(str).is_err(), "parsing {}", str);
             assert!(Host::try_from(str.to_owned()).is_err(), "parsing {}", str);
+        }
+    }
+
+    #[test]
+    fn compare_host_with_ipv4_bidirectional() {
+        let test_cases = [
+            (
+                true,
+                "127.0.0.1".parse::<Host>().unwrap(),
+                Ipv4Addr::new(127, 0, 0, 1),
+            ),
+            (
+                false,
+                "127.0.0.2".parse::<Host>().unwrap(),
+                Ipv4Addr::new(127, 0, 0, 1),
+            ),
+            (
+                false,
+                "127.0.0.1".parse::<Host>().unwrap(),
+                Ipv4Addr::new(127, 0, 0, 2),
+            ),
+        ];
+        for (expected, a, b) in test_cases {
+            assert_eq!(expected, a == b, "a[{a}] == b[{b}]");
+            assert_eq!(expected, b == a, "b[{b}] == a[{a}]");
+        }
+    }
+
+    #[test]
+    fn compare_host_with_ipv6_bidirectional() {
+        let test_cases = [
+            (
+                true,
+                "::1".parse::<Host>().unwrap(),
+                Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1),
+            ),
+            (
+                false,
+                "::2".parse::<Host>().unwrap(),
+                Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1),
+            ),
+            (
+                false,
+                "::1".parse::<Host>().unwrap(),
+                Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 2),
+            ),
+        ];
+        for (expected, a, b) in test_cases {
+            assert_eq!(expected, a == b, "a[{a}] == b[{b}]");
+            assert_eq!(expected, b == a, "b[{b}] == a[{a}]");
+        }
+    }
+
+    #[test]
+    fn compare_host_with_ip_bidirectional() {
+        let test_cases = [
+            (
+                true,
+                "127.0.0.1".parse::<Host>().unwrap(),
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            ),
+            (
+                false,
+                "127.0.0.2".parse::<Host>().unwrap(),
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            ),
+            (
+                false,
+                "127.0.0.1".parse::<Host>().unwrap(),
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
+            ),
+            (
+                false,
+                "::2".parse::<Host>().unwrap(),
+                IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+            ),
+        ];
+        for (expected, a, b) in test_cases {
+            assert_eq!(expected, a == b, "a[{a}] == b[{b}]");
+            assert_eq!(expected, b == a, "b[{b}] == a[{a}]");
         }
     }
 }
