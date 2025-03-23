@@ -25,6 +25,7 @@
 
 // rama provides everything out of the box to build a complete web service.
 use rama::{
+    Context, Layer,
     http::{
         layer::{compression::CompressionLayer, trace::TraceLayer},
         matcher::HttpMatcher,
@@ -32,19 +33,18 @@ use rama::{
         server::HttpServer,
         service::web::WebService,
     },
-    net::stream::{matcher::SocketMatcher, SocketInfo},
+    net::stream::{SocketInfo, matcher::SocketMatcher},
     rt::Executor,
-    Context, Layer,
 };
 
+use std::sync::Arc;
 /// Everything else we need is provided by the standard library, community crates or tokio.
 use std::sync::atomic::AtomicU64;
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 #[derive(Debug, Default)]
 struct AppState {
@@ -69,11 +69,11 @@ async fn main() {
         .listen_with_state(
             Arc::new(AppState::default()),
             addr,
-            (TraceLayer::new_for_http(), CompressionLayer::new()).layer(
+            (TraceLayer::new_for_http(), CompressionLayer::new()).into_layer(
                 WebService::default()
                     .not_found(Redirect::temporary("/error.html"))
                     .get("/coin", coin_page)
-                    .post("/coin", |ctx: Context<Arc<AppState>>| async move {
+                    .post("/coin", async |ctx: Context<Arc<AppState>>| {
                         ctx.state().counter.fetch_add(1, Ordering::AcqRel);
                         coin_page(ctx).await
                     })

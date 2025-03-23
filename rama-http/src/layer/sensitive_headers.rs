@@ -28,7 +28,7 @@
 //!     // The middleware is constructed from an iterator of headers to easily mark
 //!     // multiple headers at once.
 //!     SetSensitiveHeadersLayer::new(once(AUTHORIZATION)),
-//! ).layer(service_fn(handle));
+//! ).into_layer(service_fn(handle));
 //!
 //! // Call the service.
 //! let response = service
@@ -38,7 +38,7 @@
 //! # }
 //! ```
 
-use crate::{header, HeaderName, Request, Response};
+use crate::{HeaderName, Request, Response, header};
 use rama_core::{Context, Layer, Service};
 use rama_utils::macros::define_inner_service_accessors;
 use std::sync::Arc;
@@ -78,6 +78,13 @@ impl<S> Layer<S> for SetSensitiveHeadersLayer {
         SetSensitiveRequestHeaders::from_shared(
             SetSensitiveResponseHeaders::from_shared(inner, self.headers.clone()),
             self.headers.clone(),
+        )
+    }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        SetSensitiveRequestHeaders::from_shared(
+            SetSensitiveResponseHeaders::from_shared(inner, self.headers.clone()),
+            self.headers,
         )
     }
 }
@@ -124,6 +131,13 @@ impl<S> Layer<S> for SetSensitiveRequestHeadersLayer {
         SetSensitiveRequestHeaders {
             inner,
             headers: self.headers.clone(),
+        }
+    }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        SetSensitiveRequestHeaders {
+            inner,
+            headers: self.headers,
         }
     }
 }
@@ -222,6 +236,13 @@ impl<S> Layer<S> for SetSensitiveResponseHeadersLayer {
             headers: self.headers.clone(),
         }
     }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        SetSensitiveResponseHeaders {
+            inner,
+            headers: self.headers,
+        }
+    }
 }
 
 /// Mark response headers as [sensitive].
@@ -286,7 +307,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{header, HeaderValue, Request, Response};
+    use crate::{HeaderValue, Request, Response, header};
     use rama_core::service::service_fn;
 
     #[tokio::test]
@@ -316,7 +337,7 @@ mod tests {
             SetSensitiveRequestHeadersLayer::new(vec![header::COOKIE]),
             SetSensitiveResponseHeadersLayer::new(vec![header::SET_COOKIE]),
         )
-            .layer(service_fn(response_set_cookie));
+            .into_layer(service_fn(response_set_cookie));
 
         let mut req = Request::new(());
         req.headers_mut()
@@ -326,11 +347,13 @@ mod tests {
 
         let resp = service.serve(Context::default(), req).await.unwrap();
 
-        assert!(!resp
-            .headers()
-            .get(header::CONTENT_TYPE)
-            .unwrap()
-            .is_sensitive());
+        assert!(
+            !resp
+                .headers()
+                .get(header::CONTENT_TYPE)
+                .unwrap()
+                .is_sensitive()
+        );
 
         let mut iter = resp.headers().get_all(header::SET_COOKIE).iter().peekable();
 

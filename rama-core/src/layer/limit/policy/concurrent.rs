@@ -13,7 +13,7 @@
 //! # #[tokio::main]
 //! # async fn main() {
 //!
-//! let service = service_fn(|_, _| async {
+//! let service = service_fn(async |_, _| {
 //!     Ok::<_, Infallible>(())
 //! });
 //! let mut service = Limit::new(service, ConcurrentPolicy::max(2));
@@ -122,7 +122,7 @@ where
                     ctx,
                     request,
                     output: PolicyOutput::Ready(guard),
-                }
+                };
             }
             Err(err) => err,
         };

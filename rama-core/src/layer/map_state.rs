@@ -1,6 +1,5 @@
 use crate::{Context, Layer, Service};
 use rama_utils::macros::define_inner_service_accessors;
-use std::future::Future;
 
 /// Middleware that can be used to map the state,
 /// and pass it as the new state for the inner service.
@@ -94,5 +93,9 @@ impl<S, F: Clone> Layer<S> for MapStateLayer<F> {
 
     fn layer(&self, inner: S) -> Self::Service {
         MapState::new(inner, self.f.clone())
+    }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        MapState::new(inner, self.f)
     }
 }

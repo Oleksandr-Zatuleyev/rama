@@ -120,7 +120,7 @@
 //!
 //!     let service =
 //!         ProxyDBLayer::new(Arc::new(db)).filter_mode(ProxyFilterMode::Default)
-//!         .layer(service_fn(|ctx: Context<()>, _: Request| async move {
+//!         .into_layer(service_fn(async  |ctx: Context<()>, _: Request| {
 //!             Ok::<_, Infallible>(ctx.get::<ProxyAddress>().unwrap().clone())
 //!         }));
 //!
@@ -212,7 +212,7 @@
 //!
 //!             (!output.is_empty()).then(|| format!("{username}-{output}"))
 //!         })
-//!         .layer(service_fn(|ctx: Context<()>, _: Request| async move {
+//!         .into_layer(service_fn(async |ctx: Context<()>, _: Request| {
 //!             Ok::<_, Infallible>(ctx.get::<ProxyAddress>().unwrap().clone())
 //!         }));
 //!
@@ -262,7 +262,7 @@ pub use proxydb::layer::{ProxyDBLayer, ProxyDBService, ProxyFilterMode, Username
 
 #[cfg(feature = "live-update")]
 #[doc(inline)]
-pub use proxydb::{proxy_db_updater, LiveUpdateProxyDB, LiveUpdateProxyDBSetter};
+pub use proxydb::{LiveUpdateProxyDB, LiveUpdateProxyDBSetter, proxy_db_updater};
 
 #[cfg(feature = "memory-db")]
 #[doc(inline)]

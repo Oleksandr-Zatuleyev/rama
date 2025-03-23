@@ -1,9 +1,9 @@
+use crate::Body;
 use crate::dep::http_body::Body as HttpBody;
 use crate::dep::http_body_util::BodyExt;
 use crate::header::ALLOW;
 use crate::service::fs::{ServeDir, ServeFile};
-use crate::Body;
-use crate::{header, Method, Response};
+use crate::{Method, Response, header};
 use crate::{Request, StatusCode};
 use brotli::BrotliDecompress;
 use bytes::Bytes;
@@ -395,7 +395,7 @@ async fn redirect_to_trailing_slash_on_dir() {
 
     assert_eq!(res.status(), StatusCode::TEMPORARY_REDIRECT);
 
-    let location = &res.headers()[http::header::LOCATION];
+    let location = &res.headers()[rama_http_types::header::LOCATION];
     assert_eq!(location, "/src/");
 }
 
@@ -493,15 +493,17 @@ async fn read_partial_in_bounds() {
         res.headers()["content-length"],
         (bytes_end_incl - bytes_start_incl + 1).to_string()
     );
-    assert!(res.headers()["content-range"]
-        .to_str()
-        .unwrap()
-        .starts_with(&format!(
-            "bytes {}-{}/{}",
-            bytes_start_incl,
-            bytes_end_incl,
-            file_contents.len()
-        )));
+    assert!(
+        res.headers()["content-range"]
+            .to_str()
+            .unwrap()
+            .starts_with(&format!(
+                "bytes {}-{}/{}",
+                bytes_start_incl,
+                bytes_end_incl,
+                file_contents.len()
+            ))
+    );
     assert_eq!(res.headers()["content-type"], "text/markdown");
 
     let body = res.into_body().collect().await.unwrap().to_bytes();

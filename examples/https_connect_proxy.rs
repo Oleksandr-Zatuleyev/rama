@@ -24,9 +24,11 @@
 //! you'll need to first import and trust the generated certificate.
 
 use rama::{
+    Context, Layer, Service,
     graceful::Shutdown,
     http::{
-        client::HttpClient,
+        Body, IntoResponse, Request, Response, StatusCode,
+        client::EasyHttpWebClient,
         layer::{
             proxy_auth::ProxyAuthLayer,
             trace::TraceLayer,
@@ -34,26 +36,24 @@ use rama::{
         },
         matcher::MethodMatcher,
         server::HttpServer,
-        Body, IntoResponse, Request, Response, StatusCode,
     },
     net::http::RequestContext,
     net::stream::layer::http::BodyLimitLayer,
     net::tls::{
-        server::{SelfSignedData, ServerAuth, ServerConfig},
         ApplicationProtocol, SecureTransport,
+        server::{SelfSignedData, ServerAuth, ServerConfig},
     },
     net::user::Basic,
     rt::Executor,
     service::service_fn,
     tcp::{client::default_tcp_connect, server::TcpListener, utils::is_connection_error},
     tls::std::server::TlsAcceptorLayer,
-    Context, Layer, Service,
 };
 
 use std::convert::Infallible;
 use std::time::Duration;
 use tracing::metadata::LevelFilter;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[tokio::main]
 async fn main() {
@@ -83,7 +83,7 @@ async fn main() {
         .expect("create tls server config");
 
     // create tls proxy
-    shutdown.spawn_task_fn(|guard| async move {
+    shutdown.spawn_task_fn(async |guard| {
         let tcp_service = TcpListener::build()
             .bind("127.0.0.1:62016")
             .await
@@ -102,7 +102,7 @@ async fn main() {
                     service_fn(http_connect_proxy),
                 ),
             )
-                .layer(service_fn(http_plain_proxy)),
+                .into_layer(service_fn(http_plain_proxy)),
         );
 
         tcp_service
@@ -113,7 +113,7 @@ async fn main() {
                     BodyLimitLayer::symmetric(2 * 1024 * 1024),
                     TlsAcceptorLayer::new(tls_service_data).with_store_client_hello(true),
                 )
-                    .layer(http_service),
+                    .into_layer(http_service),
             )
             .await;
     });
@@ -176,7 +176,7 @@ async fn http_plain_proxy<S>(ctx: Context<S>, req: Request) -> Result<Response, 
 where
     S: Clone + Send + Sync + 'static,
 {
-    let client = HttpClient::default();
+    let client = EasyHttpWebClient::default();
     let uri = req.uri().clone();
     tracing::debug!(uri = %req.uri(), "proxy connect plain text request");
     match client.serve(ctx, req).await {

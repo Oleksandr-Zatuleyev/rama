@@ -1,7 +1,10 @@
+use serde::{Deserialize, Serialize};
+
 use crate::address::Host;
+use crate::tls::enums::CertificateCompressionAlgorithm;
 use crate::tls::{
-    enums::CompressionAlgorithm, ApplicationProtocol, CipherSuite, ECPointFormat, ExtensionId,
-    ProtocolVersion, SignatureScheme, SupportedGroup,
+    ApplicationProtocol, CipherSuite, ECPointFormat, ExtensionId, ProtocolVersion, SignatureScheme,
+    SupportedGroup, enums::CompressionAlgorithm,
 };
 
 #[cfg(feature = "rustls")]
@@ -10,7 +13,7 @@ mod rustls;
 #[cfg(feature = "boring")]
 mod boring;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 /// When a client first connects to a server, it is required to send
 /// the ClientHello as its first message.
 ///
@@ -52,7 +55,7 @@ impl ClientHello {
     /// See [`ClientHelloExtension::ServerName`] for more information about the server name.
     pub fn ext_server_name(&self) -> Option<&Host> {
         for ext in &self.extensions {
-            if let ClientHelloExtension::ServerName(ref host) = ext {
+            if let ClientHelloExtension::ServerName(host) = ext {
                 return host.as_ref();
             }
         }
@@ -65,7 +68,7 @@ impl ClientHello {
     /// See [`ClientHelloExtension::SupportedGroups`] for more information about these curves.
     pub fn ext_supported_groups(&self) -> Option<&[SupportedGroup]> {
         for ext in &self.extensions {
-            if let ClientHelloExtension::SupportedGroups(ref groups) = ext {
+            if let ClientHelloExtension::SupportedGroups(groups) = ext {
                 return Some(&groups[..]);
             }
         }
@@ -78,7 +81,7 @@ impl ClientHello {
     /// See [`ClientHelloExtension::ECPointFormats`] for more information about this.
     pub fn ext_ec_point_formats(&self) -> Option<&[ECPointFormat]> {
         for ext in &self.extensions {
-            if let ClientHelloExtension::ECPointFormats(ref formats) = ext {
+            if let ClientHelloExtension::ECPointFormats(formats) = ext {
                 return Some(&formats[..]);
             }
         }
@@ -91,7 +94,7 @@ impl ClientHello {
     /// See [`ClientHelloExtension::SignatureAlgorithms`] for more information about these algorithms
     pub fn ext_signature_algorithms(&self) -> Option<&[SignatureScheme]> {
         for ext in &self.extensions {
-            if let ClientHelloExtension::SignatureAlgorithms(ref algos) = ext {
+            if let ClientHelloExtension::SignatureAlgorithms(algos) = ext {
                 return Some(&algos[..]);
             }
         }
@@ -104,7 +107,7 @@ impl ClientHello {
     /// See [`ClientHelloExtension::ApplicationLayerProtocolNegotiation`] for more information about these protocols (ALPN).
     pub fn ext_alpn(&self) -> Option<&[ApplicationProtocol]> {
         for ext in &self.extensions {
-            if let ClientHelloExtension::ApplicationLayerProtocolNegotiation(ref alpns) = ext {
+            if let ClientHelloExtension::ApplicationLayerProtocolNegotiation(alpns) = ext {
                 return Some(&alpns[..]);
             }
         }
@@ -117,7 +120,7 @@ impl ClientHello {
     /// See [`ClientHelloExtension::SupportedVersions`] for more information about these versions
     pub fn supported_versions(&self) -> Option<&[ProtocolVersion]> {
         for ext in &self.extensions {
-            if let ClientHelloExtension::SupportedVersions(ref versions) = ext {
+            if let ClientHelloExtension::SupportedVersions(versions) = ext {
                 return Some(&versions[..]);
             }
         }
@@ -125,7 +128,7 @@ impl ClientHello {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize, Hash)]
 /// Extensions that can be set in a [`ClientHello`] message by a TLS client.
 ///
 /// While its name may infer that an extension is by definition optional,
@@ -196,6 +199,18 @@ pub enum ClientHelloExtension {
     ///
     /// - <https://www.iana.org/go/rfc8446>
     SupportedVersions(Vec<ProtocolVersion>),
+    /// The algorithm used to compress the certificate.
+    ///
+    /// # Reference
+    ///
+    /// - <https://datatracker.ietf.org/doc/html/rfc8879>
+    CertificateCompression(Vec<CertificateCompressionAlgorithm>),
+    /// The maximum size of a record.
+    ///
+    /// # Reference
+    ///
+    /// - <https://datatracker.ietf.org/doc/html/rfc8449>
+    RecordSizeLimit(u16),
     /// Any extension not supported by Rama,
     /// as it is still to be done or considered out of scope.
     Opaque {
@@ -218,6 +233,8 @@ impl ClientHelloExtension {
                 ExtensionId::APPLICATION_LAYER_PROTOCOL_NEGOTIATION
             }
             ClientHelloExtension::SupportedVersions(_) => ExtensionId::SUPPORTED_VERSIONS,
+            ClientHelloExtension::CertificateCompression(_) => ExtensionId::COMPRESS_CERTIFICATE,
+            ClientHelloExtension::RecordSizeLimit(_) => ExtensionId::RECORD_SIZE_LIMIT,
             ClientHelloExtension::Opaque { id, .. } => *id,
         }
     }

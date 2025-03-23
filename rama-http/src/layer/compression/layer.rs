@@ -1,7 +1,8 @@
 use super::predicate::DefaultPredicate;
 use super::{Compression, Predicate};
-use crate::layer::util::compression::{AcceptEncoding, CompressionLevel};
+use crate::layer::util::compression::CompressionLevel;
 use rama_core::Layer;
+use rama_http_types::headers::encoding::AcceptEncoding;
 
 /// Compress response bodies of the underlying service.
 ///
@@ -27,6 +28,15 @@ where
             inner,
             accept: self.accept,
             predicate: self.predicate.clone(),
+            quality: self.quality,
+        }
+    }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        Compression {
+            inner,
+            accept: self.accept,
+            predicate: self.predicate,
             quality: self.quality,
         }
     }
@@ -118,7 +128,7 @@ mod tests {
     use super::*;
 
     use crate::dep::http_body_util::BodyExt;
-    use crate::{header::ACCEPT_ENCODING, Body, Request, Response};
+    use crate::{Body, Request, Response, header::ACCEPT_ENCODING};
     use rama_core::service::service_fn;
     use rama_core::{Context, Service};
     use std::convert::Infallible;
@@ -144,7 +154,7 @@ mod tests {
             .gzip(false);
 
         // Compress responses based on the `Accept-Encoding` header.
-        let service = deflate_only_layer.layer(service_fn(handle));
+        let service = deflate_only_layer.into_layer(service_fn(handle));
 
         // Call the service with the deflate only layer
         let request = Request::builder()
@@ -167,7 +177,7 @@ mod tests {
             .deflate(false);
 
         // Compress responses based on the `Accept-Encoding` header.
-        let service = br_only_layer.layer(service_fn(handle));
+        let service = br_only_layer.into_layer(service_fn(handle));
 
         // Call the service with the br only layer
         let request = Request::builder()
@@ -209,7 +219,7 @@ mod tests {
             .deflate(false)
             .gzip(false);
 
-        let service = zstd_layer.layer(service_fn(zeroes));
+        let service = zstd_layer.into_layer(service_fn(zeroes));
 
         let request = Request::builder()
             .header(ACCEPT_ENCODING, "zstd")

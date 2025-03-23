@@ -6,10 +6,12 @@
 //! [`tls`]: crate::tls
 
 use crate::{
+    Context, Layer, Service,
     cli::ForwardKind,
     combinators::{Either3, Either7},
     error::{BoxError, OpaqueError},
     http::{
+        IntoResponse, Request, Response, Version,
         dep::http_body_util::BodyExt,
         headers::{CFConnectingIp, ClientIp, TrueClientIp, XClientIp, XRealIp},
         layer::{
@@ -22,16 +24,14 @@ use crate::{
         proto::h2::PseudoHeaderOrder,
         response::Json,
         server::HttpServer,
-        IntoResponse, Request, Response, Version,
     },
-    layer::{limit::policy::ConcurrentPolicy, ConsumeErrLayer, LimitLayer, TimeoutLayer},
+    layer::{ConsumeErrLayer, LimitLayer, TimeoutLayer, limit::policy::ConcurrentPolicy},
     net::fingerprint::Ja4H,
     net::forwarded::Forwarded,
     net::http::RequestContext,
-    net::stream::{layer::http::BodyLimitLayer, SocketInfo},
+    net::stream::{SocketInfo, layer::http::BodyLimitLayer},
     proxy::haproxy::server::HaProxyLayer,
     rt::Executor,
-    Context, Layer, Service,
 };
 use serde_json::json;
 use std::{convert::Infallible, time::Duration};
@@ -42,7 +42,7 @@ use crate::{
     net::fingerprint::{Ja3, Ja4},
     net::tls::server::ServerConfig,
     tls::std::server::TlsAcceptorLayer,
-    tls::types::{client::ClientHelloExtension, SecureTransport},
+    tls::types::{SecureTransport, client::ClientHelloExtension},
 };
 
 #[derive(Debug, Clone)]
@@ -50,6 +50,7 @@ use crate::{
 /// echo'ing back information about that request and its underlying transport / presentation layers.
 pub struct EchoServiceBuilder<H> {
     concurrent_limit: usize,
+    body_limit: usize,
     timeout: Duration,
     forward: Option<ForwardKind>,
 
@@ -65,6 +66,7 @@ impl Default for EchoServiceBuilder<()> {
     fn default() -> Self {
         Self {
             concurrent_limit: 0,
+            body_limit: 1024 * 1024,
             timeout: Duration::ZERO,
             forward: None,
 
@@ -99,6 +101,18 @@ impl<H> EchoServiceBuilder<H> {
     /// (0 = no limit)
     pub fn set_concurrent(&mut self, limit: usize) -> &mut Self {
         self.concurrent_limit = limit;
+        self
+    }
+
+    /// set the body limit in bytes for each request
+    pub fn body_limit(mut self, limit: usize) -> Self {
+        self.body_limit = limit;
+        self
+    }
+
+    /// set the body limit in bytes for each request
+    pub fn set_body_limit(&mut self, limit: usize) -> &mut Self {
+        self.body_limit = limit;
         self
     }
 
@@ -195,6 +209,7 @@ impl<H> EchoServiceBuilder<H> {
     pub fn http_layer<H2>(self, layer: H2) -> EchoServiceBuilder<(H, H2)> {
         EchoServiceBuilder {
             concurrent_limit: self.concurrent_limit,
+            body_limit: self.body_limit,
             timeout: self.timeout,
             forward: self.forward,
 
@@ -263,8 +278,7 @@ where
                 .then(|| LimitLayer::new(ConcurrentPolicy::max(self.concurrent_limit))),
             (!self.timeout.is_zero()).then(|| TimeoutLayer::new(self.timeout)),
             tcp_forwarded_layer,
-            // Limit the body size to 1MB for requests
-            BodyLimitLayer::request_only(1024 * 1024),
+            BodyLimitLayer::request_only(self.body_limit),
             #[cfg(any(feature = "rustls", feature = "boring"))]
             tls_acceptor_data.map(|data| TlsAcceptorLayer::new(data).with_store_client_hello(true)),
         );
@@ -276,7 +290,7 @@ where
             ConsumeErrLayer::default(),
             http_forwarded_layer,
         )
-            .layer(self.http_service_builder.layer(EchoService));
+            .into_layer(self.http_service_builder.into_layer(EchoService));
 
         let http_transport_service = match self.http_version {
             Some(Version::HTTP_2) => Either3::A(HttpServer::h2(executor).service(http_service)),
@@ -284,12 +298,12 @@ where
                 Either3::B(HttpServer::http1().service(http_service))
             }
             Some(_) => {
-                return Err(OpaqueError::from_display("unsupported http version").into_boxed())
+                return Err(OpaqueError::from_display("unsupported http version").into_boxed());
             }
             None => Either3::C(HttpServer::auto(executor).service(http_service)),
         };
 
-        Ok(tcp_service_builder.layer(http_transport_service))
+        Ok(tcp_service_builder.into_layer(http_transport_service))
     }
 }
 
@@ -382,13 +396,13 @@ impl Service<(), Request> for EchoService {
                     });
 
                 json!({
-                    "ja4": ja4,
-                    "ja3": ja3,
-                    "version": hello.protocol_version().to_string(),
-                    "cipher_suites": hello
-                    .cipher_suites().iter().map(|s| s.to_string()).collect::<Vec<_>>(),
-                    "compression_algorithms": hello
-                    .compression_algorithms().iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                    "header": {
+                        "version": hello.protocol_version().to_string(),
+                        "cipher_suites": hello
+                        .cipher_suites().iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                        "compression_algorithms": hello
+                        .compression_algorithms().iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                    },
                     "extensions": hello.extensions().iter().map(|extension| match extension {
                         ClientHelloExtension::ServerName(domain) => json!({
                             "id": extension.id().to_string(),
@@ -414,11 +428,27 @@ impl Service<(), Request> for EchoService {
                             "id": extension.id().to_string(),
                             "data": v.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
                         }),
-                        ClientHelloExtension::Opaque { id, data } => json!({
-                            "id": id.to_string(),
-                            "data": format!("0x{}", hex::encode(data)),
+                        ClientHelloExtension::CertificateCompression(v) => json!({
+                            "id": extension.id().to_string(),
+                            "data": v.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
                         }),
+                        ClientHelloExtension::RecordSizeLimit(v) => json!({
+                            "id": extension.id().to_string(),
+                            "data": v.to_string(),
+                        }),
+                        ClientHelloExtension::Opaque { id, data } => if data.is_empty() {
+                            json!({
+                                "id": id.to_string()
+                            })
+                        } else {
+                            json!({
+                                "id": id.to_string(),
+                                "data": format!("0x{}", hex::encode(data))
+                            })
+                        },
                     }).collect::<Vec<_>>(),
+                    "ja3": ja3,
+                    "ja4": ja4,
                 })
             });
 

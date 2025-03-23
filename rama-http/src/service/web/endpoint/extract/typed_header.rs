@@ -128,7 +128,7 @@ impl TypedHeaderRejectionReason {
 
 impl IntoResponse for TypedHeaderRejection {
     fn into_response(self) -> Response {
-        (http::StatusCode::BAD_REQUEST, self.to_string()).into_response()
+        (rama_http_types::StatusCode::BAD_REQUEST, self.to_string()).into_response()
     }
 }
 
@@ -157,9 +157,9 @@ impl std::error::Error for TypedHeaderRejection {
 #[cfg(test)]
 mod tests {
     use crate::{
+        Body, Request,
         headers::ContentType,
         service::web::extract::{FromRequestContextRefPair, TypedHeader},
-        Body, Request,
     };
     use rama_core::Context;
 

@@ -30,6 +30,10 @@ where
     fn layer(&self, inner: S) -> Self::Service {
         (self.f.clone())(inner)
     }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        (self.f)(inner)
+    }
 }
 
 impl<F> Clone for LayerFn<F>
@@ -63,7 +67,7 @@ mod tests {
     /// for users that want to declare a Layer without implementing the Layer trait explicitly themselves.
     #[tokio::test]
     async fn test_layer_fn() {
-        use crate::{service::service_fn, Context, Service};
+        use crate::{Context, Service, service::service_fn};
         use std::convert::Infallible;
 
         struct ToUpper<S>(S);
@@ -106,7 +110,7 @@ mod tests {
         }
 
         let layer = layer_fn(ToUpper);
-        let f = |_, req| async move { Ok::<_, Infallible>(req) };
+        let f = async |_, req| Ok::<_, Infallible>(req);
 
         let res = layer
             .layer(service_fn(f))

@@ -1,8 +1,8 @@
 use super::BytesRejection;
+use crate::Request;
 use crate::dep::http_body_util::BodyExt;
 use crate::service::web::extract::FromRequest;
 use crate::utils::macros::{composite_http_rejection, define_http_rejection};
-use crate::Request;
 
 pub use crate::response::Json;
 
@@ -66,8 +66,8 @@ where
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::service::web::WebService;
     use crate::StatusCode;
+    use crate::service::web::WebService;
     use rama_core::{Context, Service};
 
     #[tokio::test]
@@ -79,16 +79,16 @@ mod test {
             alive: Option<bool>,
         }
 
-        let service = WebService::default().post("/", |Json(body): Json<Input>| async move {
+        let service = WebService::default().post("/", async |Json(body): Json<Input>| {
             assert_eq!(body.name, "glen");
             assert_eq!(body.age, 42);
             assert_eq!(body.alive, None);
         });
 
-        let req = http::Request::builder()
-            .method(http::Method::POST)
+        let req = rama_http_types::Request::builder()
+            .method(rama_http_types::Method::POST)
             .header(
-                http::header::CONTENT_TYPE,
+                rama_http_types::header::CONTENT_TYPE,
                 "application/json; charset=utf-8",
             )
             .body(r#"{"name": "glen", "age": 42}"#.into())
@@ -106,12 +106,11 @@ mod test {
             _alive: Option<bool>,
         }
 
-        let service =
-            WebService::default().post("/", |Json(_): Json<Input>| async move { StatusCode::OK });
+        let service = WebService::default().post("/", async |Json(_): Json<Input>| StatusCode::OK);
 
-        let req = http::Request::builder()
-            .method(http::Method::POST)
-            .header(http::header::CONTENT_TYPE, "text/plain")
+        let req = rama_http_types::Request::builder()
+            .method(rama_http_types::Method::POST)
+            .header(rama_http_types::header::CONTENT_TYPE, "text/plain")
             .body(r#"{"name": "glen", "age": 42}"#.into())
             .unwrap();
         let resp = service.serve(Context::default(), req).await.unwrap();
@@ -127,13 +126,12 @@ mod test {
             _alive: Option<bool>,
         }
 
-        let service =
-            WebService::default().post("/", |Json(_): Json<Input>| async move { StatusCode::OK });
+        let service = WebService::default().post("/", async |Json(_): Json<Input>| StatusCode::OK);
 
-        let req = http::Request::builder()
-            .method(http::Method::POST)
+        let req = rama_http_types::Request::builder()
+            .method(rama_http_types::Method::POST)
             .header(
-                http::header::CONTENT_TYPE,
+                rama_http_types::header::CONTENT_TYPE,
                 "application/json; charset=utf-8",
             )
             .body(r#"deal with it, or not?!"#.into())

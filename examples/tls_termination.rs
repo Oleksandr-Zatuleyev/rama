@@ -43,6 +43,7 @@
 
 // rama provides everything out of the box to build a TLS termination proxy
 use rama::{
+    Context, Layer,
     graceful::Shutdown,
     layer::ConsumeErrLayer,
     net::forwarded::Forwarded,
@@ -56,7 +57,6 @@ use rama::{
         server::TcpListener,
     },
     tls::std::server::{TlsAcceptorData, TlsAcceptorLayer},
-    Context, Layer,
 };
 use rama_net::tls::server::{SelfSignedData, ServerAuth, ServerConfig};
 
@@ -64,7 +64,7 @@ use rama_net::tls::server::{SelfSignedData, ServerAuth, ServerConfig};
 use std::{convert::Infallible, time::Duration};
 use tokio::io::AsyncWriteExt;
 use tracing::metadata::LevelFilter;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[tokio::main]
 async fn main() {
@@ -84,11 +84,11 @@ async fn main() {
     let shutdown = Shutdown::default();
 
     // create tls proxy
-    shutdown.spawn_task_fn(|guard| async move {
-        let tcp_service = TlsAcceptorLayer::new(acceptor_data).layer(
+    shutdown.spawn_task_fn(async move |guard| {
+        let tcp_service = TlsAcceptorLayer::new(acceptor_data).into_layer(
             Forwarder::new(([127, 0, 0, 1], 62800)).connector(
                 // ha proxy protocol used to forwarded the client original IP
-                HaProxyClientLayer::tcp().layer(TcpConnector::new()),
+                HaProxyClientLayer::tcp().into_layer(TcpConnector::new()),
             ),
         );
 
@@ -100,9 +100,9 @@ async fn main() {
     });
 
     // create http server
-    shutdown.spawn_task_fn(|guard| async {
+    shutdown.spawn_task_fn(async |guard| {
         let tcp_service = (ConsumeErrLayer::default(), HaProxyServerLayer::new())
-            .layer(service_fn(internal_tcp_service_fn));
+            .into_layer(service_fn(internal_tcp_service_fn));
 
         TcpListener::bind("127.0.0.1:62800")
             .await

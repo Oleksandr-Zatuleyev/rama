@@ -23,7 +23,7 @@
 //! let mut service = (
 //!     // trim trailing slashes from paths
 //!     NormalizePathLayer::trim_trailing_slash(),
-//! ).layer(service_fn(handle));
+//! ).into_layer(service_fn(handle));
 //!
 //! // call the service
 //! let request = Request::builder()
@@ -42,7 +42,6 @@ use rama_core::{Context, Layer, Service};
 use rama_utils::macros::define_inner_service_accessors;
 use std::borrow::Cow;
 use std::fmt;
-use std::future::Future;
 
 /// Layer that applies [`NormalizePath`] which normalizes paths.
 ///
@@ -170,8 +169,8 @@ fn normalize_trailing_slash(uri: &mut Uri) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rama_core::service::service_fn;
     use rama_core::Layer;
+    use rama_core::service::service_fn;
     use std::convert::Infallible;
 
     #[tokio::test]
@@ -180,7 +179,7 @@ mod tests {
             Ok(Response::new(request.uri().to_string()))
         }
 
-        let svc = NormalizePathLayer::trim_trailing_slash().layer(service_fn(handle));
+        let svc = NormalizePathLayer::trim_trailing_slash().into_layer(service_fn(handle));
 
         let body = svc
             .serve(

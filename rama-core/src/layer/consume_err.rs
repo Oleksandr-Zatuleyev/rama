@@ -1,4 +1,4 @@
-use crate::{error::BoxError, Context, Layer, Service};
+use crate::{Context, Layer, Service, error::BoxError};
 use rama_utils::macros::define_inner_service_accessors;
 use std::{convert::Infallible, fmt};
 
@@ -258,6 +258,14 @@ where
             f: self.f.clone(),
             inner,
             response: self.response.clone(),
+        }
+    }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        ConsumeErr {
+            f: self.f,
+            inner,
+            response: self.response,
         }
     }
 }

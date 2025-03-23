@@ -1,13 +1,11 @@
-use crate::dep::http_body::Body as HttpBody;
-use crate::layer::{
-    set_status::SetStatus,
-    util::content_encoding::{encodings, SupportedEncodings},
-};
-use crate::{header, Body, HeaderValue, Method, Request, Response, StatusCode};
+use crate::dep::http_body::{self, Body as HttpBody};
+use crate::layer::set_status::SetStatus;
+use crate::{Body, HeaderValue, Method, Request, Response, StatusCode, header};
 use bytes::Bytes;
 use percent_encoding::percent_decode;
 use rama_core::error::BoxError;
 use rama_core::{Context, Service};
+use rama_http_types::headers::encoding::{SupportedEncodings, parse_accept_encoding_headers};
 use std::{
     convert::Infallible,
     path::{Component, Path, PathBuf},
@@ -61,7 +59,7 @@ const DEFAULT_CAPACITY: usize = 65536;
 ///
 ///     // Serve the HTTP server over TCP
 ///     listener
-///         .serve(TraceErrLayer::new().layer(http_fs_server))
+///         .serve(TraceErrLayer::new().into_layer(http_fs_server))
 ///         .await;
 /// }
 /// ```
@@ -335,7 +333,7 @@ impl<F> ServeDir<F> {
     ///
     ///     // Serve the HTTP server over TCP
     ///     listener
-    ///         .serve(TraceErrLayer::new().layer(http_fs_server))
+    ///         .serve(TraceErrLayer::new().into_layer(http_fs_server))
     ///         .await;
     /// }
     /// ```
@@ -383,7 +381,7 @@ impl<F> ServeDir<F> {
     ///
     ///     // Serve the HTTP server over TCP
     ///     listener
-    ///         .serve(TraceErrLayer::new().layer(http_fs_server))
+    ///         .serve(TraceErrLayer::new().into_layer(http_fs_server))
     ///         .await;
     /// }
     /// ```
@@ -449,7 +447,7 @@ impl<F> ServeDir<F> {
     ///
     ///     // Serve the HTTP server over TCP
     ///     listener
-    ///         .serve(TraceErrLayer::new().layer(http_fs_server))
+    ///         .serve(TraceErrLayer::new().into_layer(http_fs_server))
     ///         .await;
     /// }
     ///
@@ -536,7 +534,7 @@ impl<F> ServeDir<F> {
             .and_then(|value| value.to_str().ok())
             .map(|s| s.to_owned());
 
-        let negotiated_encodings: Vec<_> = encodings(
+        let negotiated_encodings: Vec<_> = parse_accept_encoding_headers(
             req.headers(),
             self.precompressed_variants.unwrap_or_default(),
         )

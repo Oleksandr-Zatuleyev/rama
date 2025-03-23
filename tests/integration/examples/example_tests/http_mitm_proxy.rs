@@ -1,18 +1,18 @@
 use super::utils;
 use rama::{
-    http::{response::Json, server::HttpServer, BodyExtractExt, Request},
+    Context, Layer,
+    http::{BodyExtractExt, Request, response::Json, server::HttpServer},
     net::address::ProxyAddress,
     net::tls::{
-        server::{SelfSignedData, ServerAuth, ServerConfig},
         ApplicationProtocol,
+        server::{SelfSignedData, ServerAuth, ServerConfig},
     },
     rt::Executor,
     service::service_fn,
     tcp::server::TcpListener,
     tls::rustls::server::TlsAcceptorLayer,
-    Context, Layer,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[tokio::test]
 #[ignore]
@@ -23,7 +23,7 @@ async fn test_http_mitm_proxy() {
         HttpServer::auto(Executor::default())
             .listen(
                 "127.0.0.1:63003",
-                service_fn(|req: Request| async move {
+                service_fn(async |req: Request| {
                     Ok(Json(json!({
                         "method": req.method().as_str(),
                         "path": req.uri().path(),
@@ -50,8 +50,8 @@ async fn test_http_mitm_proxy() {
 
     let executor = Executor::default();
 
-    let tcp_service = TlsAcceptorLayer::new(tls_service_data).layer(
-        HttpServer::auto(executor).service(service_fn(|req: Request| async move {
+    let tcp_service = TlsAcceptorLayer::new(tls_service_data).into_layer(
+        HttpServer::auto(executor).service(service_fn(async |req: Request| {
             Ok(Json(json!({
                 "method": req.method().as_str(),
                 "path": req.uri().path(),

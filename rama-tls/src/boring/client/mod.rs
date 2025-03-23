@@ -1,8 +1,17 @@
-//! TLS client support for Rama.
+//! TLS (Boring) client support for Rama.
+
+#[cfg(feature = "compression")]
+mod compress_certificate;
+
+mod tls_stream_auto;
+pub use tls_stream_auto::AutoTlsStream;
+
+mod tls_stream;
+pub use tls_stream::TlsStream;
 
 mod connector;
 #[doc(inline)]
-pub use connector::{AutoTlsStream, TlsConnector, TlsConnectorLayer};
+pub use connector::{TlsConnector, TlsConnectorLayer, tls_connect};
 
 mod connector_data;
 #[doc(inline)]

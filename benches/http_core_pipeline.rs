@@ -10,9 +10,9 @@ use bytes::Bytes;
 use tokio::net::TcpListener;
 use tokio::sync::oneshot;
 
+use rama::http::Response;
 use rama::http::core::server::conn::http1;
 use rama::http::dep::http_body_util::Full;
-use rama::http::Response;
 use rama::service::service_fn;
 
 #[global_allocator]
@@ -51,7 +51,7 @@ fn hello_world_16(b: divan::Bencher) {
                             stream,
                             rama::http::core::service::RamaHttpService::new(
                                 rama::Context::default(),
-                                service_fn(|_| async {
+                                service_fn(async |_| {
                                     Ok::<_, Infallible>(Response::new(Full::new(Bytes::from(
                                         "Hello, World!",
                                     ))))

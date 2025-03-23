@@ -1,10 +1,10 @@
 use rama_core::{Context, Layer, Service};
 use rama_http_types::{
-    headers::{HeaderMapExt, ProxyAuthorization},
     Request,
+    headers::{HeaderMapExt, ProxyAuthorization},
 };
 use rama_net::{address::ProxyAddress, http::RequestContext, user::ProxyCredential};
-use std::{fmt, future::Future};
+use std::fmt;
 
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]

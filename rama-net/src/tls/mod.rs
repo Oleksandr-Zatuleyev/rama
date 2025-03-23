@@ -7,8 +7,8 @@ mod enums;
 #[cfg(feature = "boring")]
 pub use enums::openssl_cipher_list_str_from_cipher_list;
 pub use enums::{
-    ApplicationProtocol, CipherSuite, CompressionAlgorithm, ECPointFormat, ExtensionId,
-    ProtocolVersion, SignatureScheme, SupportedGroup,
+    ApplicationProtocol, CertificateCompressionAlgorithm, CipherSuite, CompressionAlgorithm,
+    ECPointFormat, ExtensionId, ProtocolVersion, SignatureScheme, SupportedGroup,
 };
 
 pub mod client;
@@ -99,8 +99,8 @@ pub enum DataEncoding {
 #[cfg(feature = "boring")]
 mod boring {
     use super::*;
-    use ::boring::stack::StackRef;
-    use ::boring::x509::X509;
+    use ::rama_boring::stack::StackRef;
+    use ::rama_boring::x509::X509;
     use rama_core::error::{ErrorContext, OpaqueError};
 
     impl TryFrom<&X509> for DataEncoding {

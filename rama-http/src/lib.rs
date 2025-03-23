@@ -19,10 +19,9 @@
 
 #[doc(inline)]
 pub use ::rama_http_types::{
-    header, proto,
-    response::{self, IntoResponse, Response},
     Body, BodyDataStream, BodyExtractExt, BodyLimit, HeaderMap, HeaderName, HeaderValue, Method,
-    Request, Scheme, StatusCode, Uri, Version,
+    Request, Scheme, StatusCode, Uri, Version, header, proto,
+    response::{self, IntoResponse, Response},
 };
 
 pub mod headers;
@@ -39,6 +38,8 @@ pub mod dep {
     //! Dependencies for rama http modules.
     //!
     //! Exported for your convenience.
+
+    pub use rama_core as core;
 
     #[doc(inline)]
     pub use ::rama_http_types::dep::{http, http_body, http_body_util, mime, mime_guess};

@@ -2,42 +2,48 @@
 
 use clap::Args;
 use rama::{
+    Context, Layer, Service,
     cli::args::RequestArgsBuilder,
-    error::{error, BoxError, ErrorContext, OpaqueError},
+    error::{BoxError, ErrorContext, OpaqueError, error},
     graceful::{self, Shutdown, ShutdownGuard},
     http::{
+        Request, Response,
         client::{
+            EasyHttpWebClient,
             proxy::layer::{HttpProxyAddressLayer, SetProxyAuthHttpHeaderLayer},
-            HttpClient,
         },
         layer::{
             auth::AddAuthorizationLayer,
             decompression::DecompressionLayer,
-            follow_redirect::{policy::Limited, FollowRedirectLayer},
+            follow_redirect::{FollowRedirectLayer, policy::Limited},
             required_header::AddRequiredRequestHeadersLayer,
             timeout::TimeoutLayer,
             traffic_writer::WriterMode,
         },
-        IntoResponse, Request, Response, StatusCode,
     },
-    layer::{HijackLayer, MapResultLayer},
+    layer::MapResultLayer,
     net::{
         address::ProxyAddress,
         tls::{
-            client::{ClientConfig, ClientHelloExtension, ServerVerifyMode},
             ApplicationProtocol,
+            client::{ClientConfig, ClientHelloExtension, ServerVerifyMode},
         },
         user::ProxyCredential,
     },
     rt::Executor,
-    service::service_fn,
-    Context, Layer, Service,
+    ua::{
+        emulate::{
+            UserAgentEmulateHttpConnectModifier, UserAgentEmulateHttpRequestModifier,
+            UserAgentEmulateLayer, UserAgentSelectFallback,
+        },
+        profile::UserAgentDatabase,
+    },
 };
-use std::{io::IsTerminal, time::Duration};
+use std::{io::IsTerminal, sync::Arc, time::Duration};
 use terminal_prompt::Terminal;
 use tokio::sync::oneshot;
 use tracing::level_filters::LevelFilter;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::error::ErrorWithExitCode;
 
@@ -118,16 +124,12 @@ pub struct CliCommandHttp {
     headers: bool,
 
     #[arg(short = 'v', long)]
-    /// print verbose output, alias for --all --print hHbB (not used in offline mode)
+    /// print verbose output, alias for --all --print hHbB
     verbose: bool,
 
     #[arg(long)]
     /// show output for all requests/responses (including redirects)
     all: bool,
-
-    #[arg(long)]
-    /// print the request instead of executing it
-    offline: bool,
 
     #[arg(long, short = 'o')]
     /// write output to file instead of stdout
@@ -136,6 +138,10 @@ pub struct CliCommandHttp {
     #[arg(long)]
     /// print debug info
     debug: bool,
+
+    #[arg(long, short = 'E')]
+    /// emulate user agent
+    emulate: bool,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     /// positional arguments to populate request headers and body
@@ -240,7 +246,7 @@ pub async fn run(cfg: CliCommandHttp) -> Result<(), BoxError> {
         }
     });
 
-    shutdown.spawn_task_fn(move |guard| async move {
+    shutdown.spawn_task_fn(async move |guard| {
         let result = run_inner(guard, cfg).await;
         let _ = tx.send(result);
     });
@@ -296,9 +302,7 @@ async fn create_client<S>(
 where
     S: Clone + Send + Sync + 'static,
 {
-    let (request_writer_mode, response_writer_mode) = if cfg.offline {
-        (Some(WriterMode::All), None)
-    } else if cfg.verbose {
+    let (request_writer_mode, response_writer_mode) = if cfg.verbose {
         cfg.all = true;
         (Some(WriterMode::All), Some(WriterMode::All))
     } else if cfg.body {
@@ -339,7 +343,12 @@ where
     )
     .await?;
 
-    let mut inner_client = HttpClient::default();
+    let mut inner_client = EasyHttpWebClient::default()
+        .with_http_conn_req_inspector(UserAgentEmulateHttpConnectModifier::default())
+        .with_http_serve_req_inspector((
+            UserAgentEmulateHttpRequestModifier::default(),
+            request_writer,
+        ));
 
     let server_verify_mode = if cfg.insecure {
         Some(ServerVerifyMode::Disable)
@@ -358,6 +367,10 @@ where
         ..Default::default()
     });
 
+    // TODO: need to insert TLS separate from http:
+    // - first tls is needed
+    // - but http only is to be selected after handshake is done...
+
     inner_client.set_proxy_tls_config(ClientConfig {
         server_verify_mode,
         ..Default::default()
@@ -365,6 +378,11 @@ where
 
     let client_builder = (
         MapResultLayer::new(map_internal_client_error),
+        cfg.emulate.then(|| {
+            UserAgentEmulateLayer::new(Arc::new(UserAgentDatabase::embedded()))
+                .try_auto_detect_user_agent(true)
+                .select_fallback(UserAgentSelectFallback::Random)
+        }),
         (TimeoutLayer::new(if cfg.timeout > 0 {
             Duration::from_secs(cfg.timeout)
         } else {
@@ -399,7 +417,6 @@ where
             })
             .unwrap_or_else(AddAuthorizationLayer::none),
         AddRequiredRequestHeadersLayer::default(),
-        request_writer,
         match cfg.proxy {
             None => HttpProxyAddressLayer::try_from_env_default()?,
             Some(proxy) => {
@@ -414,10 +431,9 @@ where
             }
         },
         SetProxyAuthHttpHeaderLayer::default(),
-        HijackLayer::new(cfg.offline, service_fn(dummy_response)),
     );
 
-    Ok(client_builder.layer(inner_client))
+    Ok(client_builder.into_layer(inner_client))
 }
 
 fn parse_print_mode(mode: &str) -> Result<(Option<WriterMode>, Option<WriterMode>), BoxError> {
@@ -467,10 +483,6 @@ fn parse_print_mode(mode: &str) -> Result<(Option<WriterMode>, Option<WriterMode
     }
 
     Ok((request_mode, response_mode))
-}
-
-async fn dummy_response<S, Request>(_ctx: Context<S>, _req: Request) -> Result<Response, BoxError> {
-    Ok(StatusCode::OK.into_response())
 }
 
 fn map_internal_client_error<E, Body>(

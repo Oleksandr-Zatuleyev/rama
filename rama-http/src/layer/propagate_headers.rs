@@ -20,7 +20,7 @@
 //! let mut svc = (
 //!     // This will copy `x-request-id` headers from requests onto responses.
 //!     PropagateHeaderLayer::new(HeaderName::from_static("x-request-id")),
-//! ).layer(service_fn(handle));
+//! ).into_layer(service_fn(handle));
 //!
 //! // Call the service.
 //! let request = Request::builder()
@@ -35,7 +35,7 @@
 //! # }
 //! ```
 
-use crate::{header::HeaderName, Request, Response};
+use crate::{Request, Response, header::HeaderName};
 use rama_core::{Context, Layer, Service};
 use rama_utils::macros::define_inner_service_accessors;
 
@@ -64,6 +64,13 @@ impl<S> Layer<S> for PropagateHeaderLayer {
         PropagateHeader {
             inner,
             header: self.header.clone(),
+        }
+    }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        PropagateHeader {
+            inner,
+            header: self.header,
         }
     }
 }

@@ -160,6 +160,14 @@ impl<S> Layer<S> for AddAuthorizationLayer {
             if_not_present: self.if_not_present,
         }
     }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        AddAuthorization {
+            inner,
+            value: self.value,
+            if_not_present: self.if_not_present,
+        }
+    }
 }
 
 /// Middleware that adds authorization all requests using the [`Authorization`] header.
@@ -287,9 +295,13 @@ where
         mut req: Request<ReqBody>,
     ) -> Result<Self::Response, Self::Error> {
         if let Some(value) = &self.value {
-            if !self.if_not_present || !req.headers().contains_key(http::header::AUTHORIZATION) {
+            if !self.if_not_present
+                || !req
+                    .headers()
+                    .contains_key(rama_http_types::header::AUTHORIZATION)
+            {
                 req.headers_mut()
-                    .insert(http::header::AUTHORIZATION, value.clone());
+                    .insert(rama_http_types::header::AUTHORIZATION, value.clone());
             }
         }
         self.inner.serve(ctx, req).await
@@ -343,8 +355,11 @@ mod tests {
     #[tokio::test]
     async fn making_header_sensitive() {
         let svc = ValidateRequestHeaderLayer::bearer("foo").layer(service_fn(
-            |request: Request<Body>| async move {
-                let auth = request.headers().get(http::header::AUTHORIZATION).unwrap();
+            async |request: Request<Body>| {
+                let auth = request
+                    .headers()
+                    .get(rama_http_types::header::AUTHORIZATION)
+                    .unwrap();
                 assert!(auth.is_sensitive());
 
                 Ok::<_, Infallible>(Response::new(Body::empty()))

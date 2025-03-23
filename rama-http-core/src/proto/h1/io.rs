@@ -180,6 +180,7 @@ where
                     h1_parser_config: parse_ctx.h1_parser_config.clone(),
                     h1_max_headers: parse_ctx.h1_max_headers,
                     h09_responses: parse_ctx.h09_responses,
+                    on_informational: parse_ctx.on_informational,
                 },
             )? {
                 Some(msg) => {
@@ -314,7 +315,7 @@ where
     }
 
     #[cfg(test)]
-    fn flush(&mut self) -> impl std::future::Future<Output = io::Result<()>> + '_ {
+    fn flush(&mut self) -> impl Future<Output = io::Result<()>> + '_ {
         std::future::poll_fn(move |cx| self.poll_flush(cx))
     }
 }
@@ -690,10 +691,13 @@ mod tests {
                 h1_parser_config: Default::default(),
                 h1_max_headers: None,
                 h09_responses: false,
+                on_informational: &mut None,
             };
-            assert!(buffered
-                .parse::<ClientTransaction>(cx, parse_ctx)
-                .is_pending());
+            assert!(
+                buffered
+                    .parse::<ClientTransaction>(cx, parse_ctx)
+                    .is_pending()
+            );
             Poll::Ready(())
         })
         .await;

@@ -2,9 +2,11 @@
 
 use clap::Args;
 use rama::{
+    Context, Layer, Service,
     error::BoxError,
     http::{
-        client::HttpClient,
+        Body, IntoResponse, Request, Response, StatusCode,
+        client::EasyHttpWebClient,
         layer::{
             remove_header::{RemoveRequestHeaderLayer, RemoveResponseHeaderLayer},
             trace::TraceLayer,
@@ -12,19 +14,17 @@ use rama::{
         },
         matcher::MethodMatcher,
         server::HttpServer,
-        Body, IntoResponse, Request, Response, StatusCode,
     },
-    layer::{limit::policy::ConcurrentPolicy, LimitLayer, TimeoutLayer},
+    layer::{LimitLayer, TimeoutLayer, limit::policy::ConcurrentPolicy},
     net::http::RequestContext,
     net::stream::layer::http::BodyLimitLayer,
     rt::Executor,
     service::service_fn,
     tcp::{client::default_tcp_connect, server::TcpListener, utils::is_connection_error},
-    Context, Layer, Service,
 };
 use std::{convert::Infallible, time::Duration};
 use tracing::level_filters::LevelFilter;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Debug, Args)]
 /// rama proxy server
@@ -62,7 +62,7 @@ pub async fn run(cfg: CliCommandProxy) -> Result<(), BoxError> {
     let address = format!("{}:{}", cfg.interface, cfg.port);
     tracing::info!("starting proxy on: {}", address);
 
-    graceful.spawn_task_fn(move |guard| async move {
+    graceful.spawn_task_fn(async move |guard| {
         let tcp_service = TcpListener::build()
             .bind(address)
             .await
@@ -80,7 +80,7 @@ pub async fn run(cfg: CliCommandProxy) -> Result<(), BoxError> {
                 RemoveResponseHeaderLayer::hop_by_hop(),
                 RemoveRequestHeaderLayer::hop_by_hop(),
             )
-                .layer(service_fn(http_plain_proxy)),
+                .into_layer(service_fn(http_plain_proxy)),
         );
 
         let tcp_service_builder = (
@@ -91,7 +91,7 @@ pub async fn run(cfg: CliCommandProxy) -> Result<(), BoxError> {
         );
 
         tcp_service
-            .serve_graceful(guard, tcp_service_builder.layer(http_service))
+            .serve_graceful(guard, tcp_service_builder.into_layer(http_service))
             .await;
     });
 
@@ -149,7 +149,7 @@ async fn http_plain_proxy<S>(ctx: Context<S>, req: Request) -> Result<Response, 
 where
     S: Clone + Send + Sync + 'static,
 {
-    let client = HttpClient::default();
+    let client = EasyHttpWebClient::default();
     match client.serve(ctx, req).await {
         Ok(resp) => Ok(resp),
         Err(err) => {

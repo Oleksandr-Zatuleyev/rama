@@ -1,7 +1,7 @@
 use super::FromRequestContextRefPair;
-use crate::dep::http::request::Parts;
 use crate::utils::macros::define_http_rejection;
 use rama_core::Context;
+use rama_http_types::dep::http::request::Parts;
 use rama_net::address;
 use rama_net::http::RequestContext;
 use rama_utils::macros::impl_deref;
@@ -45,17 +45,17 @@ where
 mod tests {
     use super::*;
 
+    use crate::StatusCode;
     use crate::dep::http_body_util::BodyExt as _;
     use crate::header::X_FORWARDED_HOST;
     use crate::layer::forwarded::GetForwardedHeadersService;
     use crate::service::web::WebService;
-    use crate::StatusCode;
     use crate::{Body, HeaderName, Request};
     use rama_core::Service;
 
     async fn test_host_from_request(uri: &str, host: &str, headers: Vec<(&HeaderName, &str)>) {
         let svc = GetForwardedHeadersService::x_forwarded_host(
-            WebService::default().get("/", |Host(host): Host| async move { host.to_string() }),
+            WebService::default().get("/", async |Host(host): Host| host.to_string()),
         );
 
         let mut builder = Request::builder().method("GET").uri(uri);
@@ -75,7 +75,7 @@ mod tests {
         test_host_from_request(
             "/",
             "some-domain",
-            vec![(&http::header::HOST, "some-domain:123")],
+            vec![(&rama_http_types::header::HOST, "some-domain:123")],
         )
         .await;
     }
@@ -97,7 +97,7 @@ mod tests {
             "some-domain",
             vec![
                 (&X_FORWARDED_HOST, "some-domain:456"),
-                (&http::header::HOST, "some-domain:123"),
+                (&rama_http_types::header::HOST, "some-domain:123"),
             ],
         )
         .await;

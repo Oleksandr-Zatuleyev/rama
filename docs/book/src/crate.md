@@ -43,11 +43,36 @@ Here is a list of all `rama` crates:
 - [`rama-http-backend`](https://crates.io/crates/rama-http-backend): default http backend for `rama`
 - [`rama-http-core`](https://crates.io/crates/rama-http-core): http protocol implementation driving `rama-http-backend`
 
+`rama` crates that live in <https://github.com/plabayo/rama-boring> (forks of `cloudflare/boring`):
+
+- [`rama-boring`](https://crates.io/crates/rama-boring): BoringSSL bindings for Rama
+- [`rama-boring-sys`](https://crates.io/crates/rama-boring-sys): FFI bindings to BoringSSL for Rama
+- [`rama-boring-tokio`](https://crates.io/crates/rama-boring-tokio): an implementation of SSL streams for Tokio backed by BoringSSL in function of Rama
+
+repositories in function of rama that aren't crates:
+
+- <https://github.com/plabayo/homebrew-rama>: Homebrew formula for the rama Cli tool
+
 ## Examples
 
 Examples to help you get started can be found in
 [the examples found in the `/examples` dir](https://github.com/plabayo/rama/tree/main/examples)
 to know how to use rama for your purposes.
+
+## 💪 | Performance
+
+`rama`'s default http implementation is forked from [`hyper`] and adds very little
+overhead. So `rama`'s performance is comparable to [`hyper`] and frameworks that built on top of that.
+
+[`hyper`]: https://github.com/hyperium/hyper
+
+Here's a list of external benchmarks:
+
+- http server benchmark @ <https://web-frameworks-benchmark.netlify.app/result>
+
+Please [open an issue](https://github.com/plabayo/rama/issues) or Pull Request (PR) in case
+you are aware of any other benchmarks of interest in regards to http(s) servers,
+http(s) clients or proxies such as Man-In-The-Middle (MITM) proxies.
 
 ## ⛨ | Safety
 
@@ -73,7 +98,7 @@ support as many as we reasonably can.
 
 ### Minimum supported Rust version
 
-Rama's MSRV is `1.84`.
+Rama's MSRV is `1.85`.
 
 [Using GitHub Actions we also test](https://github.com/plabayo/rama/blob/main/.github/workflows/CI.yml) if `rama` on that version still works on
 the stable and beta versions of _rust_ as well.

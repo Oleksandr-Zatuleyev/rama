@@ -38,6 +38,7 @@
 
 use opentelemetry_otlp::{ExportConfig, Protocol, WithExportConfig};
 use rama::{
+    Context, Layer,
     http::{
         layer::{opentelemetry::RequestMetricsLayer, trace::TraceLayer},
         response::Html,
@@ -48,23 +49,21 @@ use rama::{
     rt::Executor,
     tcp::server::TcpListener,
     telemetry::opentelemetry::{
-        self,
+        self, InstrumentationScope, KeyValue,
         metrics::UpDownCounter,
         sdk::{
+            Resource,
             metrics::{PeriodicReader, SdkMeterProvider},
-            runtime, Resource,
         },
         semantic_conventions::{
             self,
             resource::{HOST_ARCH, OS_NAME},
         },
-        InstrumentationScope, KeyValue,
     },
-    Context, Layer,
 };
 use std::{sync::Arc, time::Duration};
 use tracing::level_filters::LevelFilter;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Debug)]
 struct Metrics {
@@ -111,19 +110,20 @@ async fn main() {
     let meter_exporter = opentelemetry_otlp::MetricExporter::builder()
         .with_tonic()
         .with_export_config(export_config)
+        .with_timeout(Duration::from_secs(10))
         .build()
         .expect("build OT exporter");
 
-    let meter_reader = PeriodicReader::builder(meter_exporter, runtime::Tokio)
+    let meter_reader = PeriodicReader::builder(meter_exporter)
         .with_interval(Duration::from_secs(3))
-        .with_timeout(Duration::from_secs(10))
         .build();
 
     let meter = SdkMeterProvider::builder()
-        .with_resource(Resource::new(vec![KeyValue::new(
-            "service.name",
-            "http_telemetry",
-        )]))
+        .with_resource(
+            Resource::builder()
+                .with_attribute(KeyValue::new("service.name", "http_telemetry"))
+                .build(),
+        )
         .with_reader(meter_reader)
         .build();
 
@@ -135,12 +135,12 @@ async fn main() {
     let graceful = rama::graceful::Shutdown::default();
 
     // http web service
-    graceful.spawn_task_fn(|guard| async move {
+    graceful.spawn_task_fn(async |guard| {
         // http service
         let exec = Executor::graceful(guard.clone());
         let http_service = HttpServer::auto(exec).service(
-            (TraceLayer::new_for_http(), RequestMetricsLayer::default()).layer(
-                WebService::default().get("/", |ctx: Context<Arc<Metrics>>| async move {
+            (TraceLayer::new_for_http(), RequestMetricsLayer::default()).into_layer(
+                WebService::default().get("/", async |ctx: Context<Arc<Metrics>>| {
                     ctx.state().counter.add(1, &[]);
                     Html("<h1>Hello!</h1>")
                 }),
@@ -152,7 +152,10 @@ async fn main() {
             .bind("127.0.0.1:62012")
             .await
             .unwrap()
-            .serve_graceful(guard, NetworkMetricsLayer::default().layer(http_service))
+            .serve_graceful(
+                guard,
+                NetworkMetricsLayer::default().into_layer(http_service),
+            )
             .await;
     });
 

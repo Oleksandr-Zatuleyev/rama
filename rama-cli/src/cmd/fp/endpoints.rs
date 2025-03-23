@@ -1,17 +1,19 @@
 use super::{
-    data::{
-        get_http_info, get_ja4h_info, get_request_info, get_tls_display_info, get_user_agent_info,
-        DataSource, FetchMode, Initiator, RequestInfo, ResourceType, TlsDisplayInfo, UserAgentInfo,
-    },
     State,
+    data::{
+        DataSource, FetchMode, Initiator, RequestInfo, ResourceType, TlsDisplayInfo, UserAgentInfo,
+        get_and_store_http_info, get_ja4h_info, get_request_info, get_tls_display_info_and_store,
+        get_user_agent_info,
+    },
 };
 use crate::cmd::fp::data::TlsDisplayInfoExtensionData;
 use rama::{
-    http::{
-        response::Json, service::web::extract::Path, Body, IntoResponse, Request, Response,
-        StatusCode,
-    },
     Context,
+    http::{
+        Body, BodyExtractExt, IntoResponse, Request, Response, StatusCode, response::Json,
+        service::web::extract::Path,
+    },
+    ua::profile::{JsProfileWebApis, UserAgentSourceInfo},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -95,7 +97,18 @@ pub(super) async fn get_report(
     .await
     .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response())?;
 
-    let http_info = get_http_info(parts.headers, &mut parts.extensions);
+    let user_agent = user_agent_info.user_agent.clone();
+
+    let http_info = get_and_store_http_info(
+        &ctx,
+        parts.headers,
+        &mut parts.extensions,
+        parts.version,
+        user_agent.clone(),
+        Initiator::Navigator,
+    )
+    .await
+    .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response())?;
 
     let head = r#"<script src="/assets/script.js"></script>"#.to_owned();
 
@@ -126,7 +139,10 @@ pub(super) async fn get_report(
         });
     }
 
-    let tls_info = get_tls_display_info(&ctx);
+    let tls_info = get_tls_display_info_and_store(&ctx, user_agent)
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response())?;
+
     if let Some(tls_info) = tls_info {
         let mut tls_tables = tls_info.into();
         tables.append(&mut tls_tables);
@@ -175,43 +191,13 @@ pub(super) struct APINumberParams {
     number: usize,
 }
 
-pub(super) async fn get_api_fetch_number(
-    mut ctx: Context<Arc<State>>,
-    req: Request,
-) -> Result<Json<serde_json::Value>, Response> {
-    let ja4h = get_ja4h_info(&req);
-
-    let (mut parts, _) = req.into_parts();
-
-    let user_agent_info = get_user_agent_info(&ctx).await;
-
-    let request_info = get_request_info(
-        FetchMode::SameOrigin,
-        ResourceType::Xhr,
-        Initiator::Fetch,
-        &mut ctx,
-        &parts,
-    )
-    .await
-    .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response())?;
-
-    let http_info = get_http_info(parts.headers, &mut parts.extensions);
-
-    let tls_info = get_tls_display_info(&ctx);
-
-    Ok(Json(json!({
-        "number": ctx.state().counter.fetch_add(1, std::sync::atomic::Ordering::AcqRel),
-        "fp": {
-            "user_agent_info": user_agent_info,
-            "request_info": request_info,
-            "tls_info": tls_info,
-            "http_info": json!({
-                "headers": http_info.headers,
-                "pseudo_headers": http_info.pseudo_headers,
-                "ja4h": ja4h,
-            }),
-        }
-    })))
+#[derive(Serialize, Deserialize)]
+pub(super) struct APINumberRequest {
+    number: usize,
+    #[serde(alias = "sourceInfo")]
+    source_info: Option<UserAgentSourceInfo>,
+    #[serde(alias = "jsWebApis")]
+    js_web_apis: Option<JsProfileWebApis>,
 }
 
 pub(super) async fn post_api_fetch_number(
@@ -221,9 +207,11 @@ pub(super) async fn post_api_fetch_number(
 ) -> Result<Json<serde_json::Value>, Response> {
     let ja4h = get_ja4h_info(&req);
 
-    let (mut parts, _) = req.into_parts();
+    let (mut parts, body) = req.into_parts();
 
     let user_agent_info = get_user_agent_info(&ctx).await;
+
+    let user_agent = user_agent_info.user_agent.clone();
 
     let request_info = get_request_info(
         FetchMode::SameOrigin,
@@ -235,12 +223,51 @@ pub(super) async fn post_api_fetch_number(
     .await
     .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response())?;
 
-    let http_info = get_http_info(parts.headers, &mut parts.extensions);
+    let http_info = get_and_store_http_info(
+        &ctx,
+        parts.headers,
+        &mut parts.extensions,
+        parts.version,
+        user_agent.clone(),
+        Initiator::Fetch,
+    )
+    .await
+    .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response())?;
 
-    let tls_info = get_tls_display_info(&ctx);
+    let request: APINumberRequest = body
+        .try_into_json()
+        .await
+        .map_err(|err| (StatusCode::BAD_REQUEST, err.to_string()).into_response())?;
+
+    if ctx.contains::<crate::fp::StorageAuthorized>() {
+        if let Some(storage) = ctx.state().storage.as_ref() {
+            if let Some(js_web_apis) = request.js_web_apis.clone() {
+                storage
+                    .store_js_web_apis(user_agent.clone(), js_web_apis)
+                    .await
+                    .map_err(|err| {
+                        (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
+                    })?;
+            }
+
+            if let Some(source_info) = request.source_info.clone() {
+                storage
+                    .store_source_info(user_agent.clone(), source_info)
+                    .await
+                    .map_err(|err| {
+                        (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response()
+                    })?;
+            }
+        }
+    }
+
+    let tls_info = get_tls_display_info_and_store(&ctx, user_agent)
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response())?;
 
     Ok(Json(json!({
         "number": params.number,
+        "body_number": request.number,
         "fp": {
             "user_agent_info": user_agent_info,
             "request_info": request_info,
@@ -250,45 +277,8 @@ pub(super) async fn post_api_fetch_number(
                 "pseudo_headers": http_info.pseudo_headers,
                 "ja4h": ja4h,
             }),
-        }
-    })))
-}
-
-pub(super) async fn get_api_xml_http_request_number(
-    mut ctx: Context<Arc<State>>,
-    req: Request,
-) -> Result<Json<serde_json::Value>, Response> {
-    let ja4h = get_ja4h_info(&req);
-
-    let (mut parts, _) = req.into_parts();
-
-    let user_agent_info = get_user_agent_info(&ctx).await;
-
-    let request_info = get_request_info(
-        FetchMode::SameOrigin,
-        ResourceType::Xhr,
-        Initiator::Fetch,
-        &mut ctx,
-        &parts,
-    )
-    .await
-    .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response())?;
-
-    let http_info = get_http_info(parts.headers, &mut parts.extensions);
-
-    let tls_info = get_tls_display_info(&ctx);
-
-    Ok(Json(json!({
-        "number": ctx.state().counter.fetch_add(1, std::sync::atomic::Ordering::AcqRel),
-        "fp": {
-            "user_agent_info": user_agent_info,
-            "request_info": request_info,
-            "tls_info": tls_info,
-            "http_info": json!({
-                "headers": http_info.headers,
-                "pseudo_headers": http_info.pseudo_headers,
-                "ja4h": ja4h,
-            }),
+            "js_web_apis": request.js_web_apis,
+            "source_info": request.source_info,
         }
     })))
 }
@@ -304,6 +294,8 @@ pub(super) async fn post_api_xml_http_request_number(
 
     let user_agent_info = get_user_agent_info(&ctx).await;
 
+    let user_agent = user_agent_info.user_agent.clone();
+
     let request_info = get_request_info(
         FetchMode::SameOrigin,
         ResourceType::Xhr,
@@ -314,9 +306,20 @@ pub(super) async fn post_api_xml_http_request_number(
     .await
     .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response())?;
 
-    let http_info = get_http_info(parts.headers, &mut parts.extensions);
+    let http_info = get_and_store_http_info(
+        &ctx,
+        parts.headers,
+        &mut parts.extensions,
+        parts.version,
+        user_agent.clone(),
+        Initiator::XMLHttpRequest,
+    )
+    .await
+    .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response())?;
 
-    let tls_info = get_tls_display_info(&ctx);
+    let tls_info = get_tls_display_info_and_store(&ctx, user_agent)
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response())?;
 
     Ok(Json(json!({
         "number": params.number,
@@ -344,6 +347,8 @@ pub(super) async fn form(mut ctx: Context<Arc<State>>, req: Request) -> Result<H
 
     let user_agent_info = get_user_agent_info(&ctx).await;
 
+    let user_agent = user_agent_info.user_agent.clone();
+
     let request_info = get_request_info(
         FetchMode::SameOrigin,
         ResourceType::Form,
@@ -354,7 +359,16 @@ pub(super) async fn form(mut ctx: Context<Arc<State>>, req: Request) -> Result<H
     .await
     .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response())?;
 
-    let http_info = get_http_info(parts.headers, &mut parts.extensions);
+    let http_info = get_and_store_http_info(
+        &ctx,
+        parts.headers,
+        &mut parts.extensions,
+        parts.version,
+        user_agent.clone(),
+        Initiator::Form,
+    )
+    .await
+    .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response())?;
 
     let mut content = String::new();
 
@@ -402,7 +416,10 @@ pub(super) async fn form(mut ctx: Context<Arc<State>>, req: Request) -> Result<H
         });
     }
 
-    let tls_info = get_tls_display_info(&ctx);
+    let tls_info = get_tls_display_info_and_store(&ctx, user_agent)
+        .await
+        .map_err(|err| (StatusCode::INTERNAL_SERVER_ERROR, err.to_string()).into_response())?;
+
     if let Some(tls_info) = tls_info {
         let mut tls_tables = tls_info.into();
         tables.append(&mut tls_tables);
@@ -547,18 +564,19 @@ impl From<TlsDisplayInfo> for Vec<Table> {
             ],
         });
         for extension in info.extensions {
+            let mut rows = vec![("ID".to_owned(), extension.id)];
+            if let Some(data) = extension.data {
+                rows.push((
+                    "Data".to_owned(),
+                    match data {
+                        TlsDisplayInfoExtensionData::Single(s) => s,
+                        TlsDisplayInfoExtensionData::Multi(v) => v.join(", "),
+                    },
+                ));
+            }
             vec.push(Table {
                 title: "🔒 TLS Client Hello — Extension".to_owned(),
-                rows: vec![
-                    ("ID".to_owned(), extension.id),
-                    (
-                        "Data".to_owned(),
-                        match extension.data {
-                            TlsDisplayInfoExtensionData::Single(s) => s,
-                            TlsDisplayInfoExtensionData::Multi(v) => v.join(", "),
-                        },
-                    ),
-                ],
+                rows,
             });
         }
         vec

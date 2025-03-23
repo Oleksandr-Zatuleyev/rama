@@ -17,11 +17,11 @@
 //! You should see a response with `HTTP/1.1 200 OK` and the content of the `index.html` file.
 
 use rama::{
+    Layer,
     http::{server::HttpServer, service::fs::ServeDir},
     layer::TraceErrLayer,
     rt::Executor,
     tcp::server::TcpListener,
-    Layer,
 };
 
 #[tokio::main]
@@ -41,6 +41,6 @@ async fn main() {
     // ...once running you can go in browser for example to:
     println!("open: http://127.0.0.1:62009/test-files/index.html");
     listener
-        .serve(TraceErrLayer::new().layer(http_fs_server))
+        .serve(TraceErrLayer::new().into_layer(http_fs_server))
         .await;
 }

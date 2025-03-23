@@ -1,9 +1,8 @@
-use crate::{headers::HeaderExt, Method, Request, Response, Uri};
+use crate::{Method, Request, Response, Uri, headers::HeaderExt};
 use rama_core::{
-    error::{BoxError, ErrorExt, OpaqueError},
     Context, Service,
+    error::{BoxError, ErrorExt, OpaqueError},
 };
-use std::future::Future;
 
 /// Extends an Http Client with high level features,
 /// to facilitate the creation and sending of http requests,
@@ -141,7 +140,7 @@ where
                     http_client_service: self,
                     state: RequestBuilderState::Error(err),
                     _phantom: std::marker::PhantomData,
-                }
+                };
             }
         };
 
@@ -652,16 +651,16 @@ mod test {
 
     use super::*;
     use crate::{
+        IntoResponse,
         layer::{
             required_header::AddRequiredRequestHeadersLayer,
             retry::{ManagedPolicy, RetryLayer},
             trace::TraceLayer,
         },
-        IntoResponse,
     };
     use rama_core::{
         layer::{Layer, MapResultLayer},
-        service::{service_fn, BoxService},
+        service::{BoxService, service_fn},
     };
     use rama_utils::backoff::ExponentialBackoff;
     use std::convert::Infallible;
@@ -721,7 +720,7 @@ mod test {
             RetryLayer::new(ManagedPolicy::default().with_backoff(ExponentialBackoff::default())),
             AddRequiredRequestHeadersLayer::default(),
         )
-            .layer(service_fn(fake_client_fn))
+            .into_layer(service_fn(fake_client_fn))
             .boxed()
     }
 

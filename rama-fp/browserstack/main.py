@@ -3,6 +3,7 @@ from datetime import datetime
 import os
 import platform
 import itertools
+from urllib.parse import urlparse
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options as ChromeOptions
 from selenium.webdriver.firefox.options import Options as FirefoxOptions
@@ -13,14 +14,17 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
 
 # capability source:
-# > https://www.browserstack.com/docs/automate/capabilities
+# > <https://www.browserstack.com/docs/automate/capabilities>
+
+# availability list:
+# > <https://www.browserstack.com/list-of-browsers-and-platforms/automate>
 
 desktop_permutations = [
     ["latest", "latest-1", "latest-2"],
     ["Chrome", "Edge", "Firefox", "Safari"],
     (
         [["Windows", v] for v in ["10", "11"]]
-        + [["OS X", v] for v in ["Monterey", "Ventura", "Sonoma"]]
+        + [["OS X", v] for v in ["Ventura", "Sonoma", "Sequoia"]]
     ),
 ]
 
@@ -33,6 +37,9 @@ mobile_configs = [
     ("Samsung Galaxy Tab S8", "12.0", "chrome"),
     ("Samsung Galaxy A52", "11.0", "chrome"),
     ("Samsung Galaxy M52", "11.0", "chrome"),
+    ("Google Pixel 9 Pro XL", "15.0", "chrome"),
+    ("Google Pixel 9 Pro", "15.0", "chrome"),
+    ("Google Pixel 9", "15.0", "chrome"),
     ("Google Pixel 8 Pro", "14.0", "chrome"),
     ("Google Pixel 8", "14.0", "chrome"),
     ("Google Pixel 7 Pro", "13.0", "chrome"),
@@ -42,16 +49,17 @@ mobile_configs = [
     ("Google Pixel 6", "12.0", "chrome"),
     ("Google Pixel 5", "12.0", "chrome"),
     ("OnePlus 11R", "13.0", "chrome"),
-    ("OnePlus 9", "11.0", "chrome"),
+    ("OnePlus 12R", "14.0", "chrome"),
     ("Huawei P30", "9.0", "chrome"),
+    ("iPhone 16e", "18", "safari"),
+    ("iPhone 16 Pro Max", "18", "safari"),
+    ("iPhone 16 Pro", "18", "safari"),
+    ("iPhone 16 Plus", "18", "safari"),
+    ("iPhone 16", "18", "safari"),
     ("iPhone 15 Pro Max", "17", "safari"),
     ("iPhone 15 Pro", "17", "safari"),
     ("iPhone 15 Plus", "17", "safari"),
     ("iPhone 15", "17", "safari"),
-    ("iPhone 13", "17", "safari"),
-    ("iPhone 12 Pro", "17", "safari"),
-    ("iPhone 12", "17", "safari"),
-    ("iPhone 11 Pro", "17", "safari"),
     ("iPhone 14 Pro Max", "16", "safari"),
     ("iPhone 14 Pro", "16", "safari"),
     ("iPhone 14 Plus", "16", "safari"),
@@ -69,6 +77,8 @@ def env(key):
 BROWSERSTACK_USERNAME = env("BROWSERSTACK_USERNAME")
 BROWSERSTACK_ACCESS_KEY = env("BROWSERSTACK_ACCESS_KEY")
 URL = os.environ.get("URL") or "https://hub.browserstack.com/wd/hub"
+
+RAMA_FP_STORAGE_COOKIE = env("RAMA_FP_STORAGE_COOKIE")
 
 
 def get_browser_option(browser):
@@ -117,12 +127,16 @@ desired_caps = desktop_desired_caps + mobile_desired_caps
 # desired_caps = desktop_desired_caps
 # desired_caps = mobile_desired_caps
 
-
+# ensure auto comes last, so we get h2
+# as tls profile... even though rama emulate
+# should be able to adapt stuff like ALPN on the fly,
+# doesn't hurt to make sure the default is also the UA
+# default...
 entrypoints = [
-    "http://fp.ramaproxy.org:80/",
-    "https://fp.ramaproxy.org:443/",
     "http://h1.fp.ramaproxy.org:80/",
     "https://h1.fp.ramaproxy.org:443/",
+    "http://fp.ramaproxy.org:80/",
+    "https://fp.ramaproxy.org:443/",
 ]
 
 
@@ -157,6 +171,25 @@ def run_session(cap):
             driver.get(entrypoint)
             print("ua", driver.execute_script("return navigator.userAgent;"))
             print("loc", driver.execute_script("return document.location.href;"))
+
+            domain = urlparse(entrypoint).netloc.split(":")[0]
+            print("add cookies for domain", domain)
+            cookies = {
+                "rama-storage-auth": RAMA_FP_STORAGE_COOKIE,
+                "source-device-name": cap.get("deviceName", ""),
+                "source-os-name": cap.get("os", ""),
+                "source-os-version": cap.get("osVersion", ""),
+                "source-browser-name": cap.get("browserName", ""),
+                "source-browser-version": cap.get("browserVersion", ""),
+            }
+            for name, value in cookies.items():
+                print("add cookie to domain", domain, name)
+                driver.add_cookie({
+                    "name": name,
+                    "value": value,
+                    "domain": domain,
+                    "path": "/",
+                })
 
             WebDriverWait(driver, 10).until(
                 EC.visibility_of_element_located(

@@ -1,5 +1,5 @@
-use super::{service::UpgradeHandler, UpgradeService, Upgraded};
-use rama_core::{matcher::Matcher, Context, Layer, Service};
+use super::{UpgradeService, Upgraded, service::UpgradeHandler};
+use rama_core::{Context, Layer, Service, matcher::Matcher};
 use rama_http_types::Request;
 use std::{convert::Infallible, fmt, sync::Arc};
 
@@ -59,5 +59,9 @@ impl<S, State, O> Layer<S> for UpgradeLayer<State, O> {
 
     fn layer(&self, inner: S) -> Self::Service {
         UpgradeService::new(self.handlers.clone(), inner)
+    }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        UpgradeService::new(self.handlers, inner)
     }
 }

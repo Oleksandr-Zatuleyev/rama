@@ -1,6 +1,6 @@
 use std::fmt;
 
-use super::{into_response::ErrorIntoResponseFn, policy::UnlimitedPolicy, Limit};
+use super::{Limit, into_response::ErrorIntoResponseFn, policy::UnlimitedPolicy};
 use crate::Layer;
 
 /// Limit requests based on a [`Policy`].
@@ -69,11 +69,18 @@ where
     type Service = Limit<T, P, F>;
 
     fn layer(&self, service: T) -> Self::Service {
-        let policy = self.policy.clone();
         Limit {
             inner: service,
-            policy,
+            policy: self.policy.clone(),
             error_into_response: self.error_into_response.clone(),
+        }
+    }
+
+    fn into_layer(self, service: T) -> Self::Service {
+        Limit {
+            inner: service,
+            policy: self.policy,
+            error_into_response: self.error_into_response,
         }
     }
 }

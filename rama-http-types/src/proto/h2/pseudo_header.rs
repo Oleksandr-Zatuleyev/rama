@@ -1,4 +1,4 @@
-use serde::{de::Error, Deserialize, Serialize};
+use serde::{Deserialize, Serialize, de::Error};
 use smallvec::SmallVec;
 use std::{fmt, str::FromStr};
 
@@ -134,6 +134,26 @@ impl IntoIterator for PseudoHeaderOrder {
         let PseudoHeaderOrder { mut headers, .. } = self;
         headers.reverse();
         PseudoHeaderOrderIter { headers }
+    }
+}
+
+impl FromIterator<PseudoHeader> for PseudoHeaderOrder {
+    fn from_iter<T: IntoIterator<Item = PseudoHeader>>(iter: T) -> Self {
+        let mut this = Self::new();
+        for header in iter {
+            this.push(header);
+        }
+        this
+    }
+}
+
+impl<'a> FromIterator<&'a PseudoHeader> for PseudoHeaderOrder {
+    fn from_iter<T: IntoIterator<Item = &'a PseudoHeader>>(iter: T) -> Self {
+        let mut this = Self::new();
+        for header in iter {
+            this.push(*header);
+        }
+        this
     }
 }
 

@@ -4,7 +4,7 @@
 
 use crate::{Context, Layer, Service};
 use rama_utils::macros::define_inner_service_accessors;
-use std::{fmt, future::Future, marker::PhantomData};
+use std::{fmt, marker::PhantomData};
 
 /// [`Layer`] for adding some shareable value to incoming [Context].
 ///
@@ -62,6 +62,14 @@ where
         GetExtension {
             inner,
             callback: self.callback.clone(),
+            _phantom: PhantomData,
+        }
+    }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        GetExtension {
+            inner,
+            callback: self.callback,
             _phantom: PhantomData,
         }
     }
@@ -148,7 +156,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{service::service_fn, Context};
+    use crate::{Context, service::service_fn};
     use std::{convert::Infallible, sync::Arc};
 
     #[derive(Debug, Clone)]
@@ -159,10 +167,10 @@ mod tests {
         let value = Arc::new(std::sync::atomic::AtomicI32::new(0));
 
         let cloned_value = value.clone();
-        let svc = GetExtensionLayer::new(|state: State| async move {
+        let svc = GetExtensionLayer::new(async move |state: State| {
             cloned_value.store(state.0, std::sync::atomic::Ordering::Release);
         })
-        .layer(service_fn(|ctx: Context<()>, _req: ()| async move {
+        .into_layer(service_fn(async |ctx: Context<()>, _req: ()| {
             let state = ctx.get::<State>().unwrap();
             Ok::<_, Infallible>(state.0)
         }));

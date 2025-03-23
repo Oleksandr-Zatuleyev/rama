@@ -23,7 +23,7 @@
 //! let mut svc = (
 //!     // Catch panics and convert them into responses.
 //!     CatchPanicLayer::new(),
-//! ).layer(service_fn(handle));
+//! ).into_layer(service_fn(handle));
 //!
 //! // Call the service.
 //! let request = Request::new(Body::default());
@@ -80,7 +80,7 @@
 //! let svc = (
 //!     // Use `handle_panic` to create the response.
 //!     CatchPanicLayer::custom(handle_panic),
-//! ).layer(service_fn(handle));
+//! ).into_layer(service_fn(handle));
 //! #
 //! # Ok(())
 //! # }
@@ -152,6 +152,13 @@ where
         CatchPanic {
             inner,
             panic_handler: self.panic_handler.clone(),
+        }
+    }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        CatchPanic {
+            inner,
+            panic_handler: self.panic_handler,
         }
     }
 }
@@ -280,7 +287,7 @@ impl ResponseForPanic for DefaultResponseForPanic {
         #[allow(clippy::declare_interior_mutable_const)]
         const TEXT_PLAIN: HeaderValue = HeaderValue::from_static("text/plain; charset=utf-8");
         res.headers_mut()
-            .insert(http::header::CONTENT_TYPE, TEXT_PLAIN);
+            .insert(rama_http_types::header::CONTENT_TYPE, TEXT_PLAIN);
 
         res
     }
@@ -300,7 +307,7 @@ mod tests {
 
     #[tokio::test]
     async fn panic_before_returning_future() {
-        let svc = CatchPanicLayer::new().layer(service_fn(|_: Request| {
+        let svc = CatchPanicLayer::new().into_layer(service_fn(|_: Request| {
             panic!("service panic");
             async { Ok::<_, Infallible>(Response::new(Body::empty())) }
         }));
@@ -316,7 +323,7 @@ mod tests {
 
     #[tokio::test]
     async fn panic_in_future() {
-        let svc = CatchPanicLayer::new().layer(service_fn(|_: Request<Body>| async {
+        let svc = CatchPanicLayer::new().into_layer(service_fn(async |_: Request<Body>| {
             panic!("future panic");
             Ok::<_, Infallible>(Response::new(Body::empty()))
         }));

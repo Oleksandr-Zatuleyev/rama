@@ -148,7 +148,7 @@ mod compression_tests {
     #[cfg(feature = "compression")]
     async fn precompressed_zstd() {
         use async_compression::tokio::bufread::ZstdDecoder;
-        use http_body_util::BodyExt;
+        use rama_http_types::dep::http_body_util::BodyExt;
         use tokio::io::AsyncReadExt;
 
         let svc = ServeFile::new("../test-files/precompressed.txt").precompressed_zstd();
@@ -171,12 +171,12 @@ mod compression_tests {
 
 #[cfg(test)]
 mod tests {
+    use crate::Body;
+    use crate::Method;
     use crate::dep::http_body_util::BodyExt;
     use crate::dep::mime::Mime;
     use crate::header;
     use crate::service::fs::ServeFile;
-    use crate::Body;
-    use crate::Method;
     use crate::{Request, StatusCode};
     use brotli::BrotliDecompress;
     use flate2::bufread::DeflateDecoder;

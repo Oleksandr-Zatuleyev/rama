@@ -27,6 +27,7 @@ pub mod error_handling;
 pub mod follow_redirect;
 pub mod forwarded;
 pub mod header_config;
+pub mod header_from_str_config;
 pub mod header_option_value;
 pub mod map_request_body;
 pub mod map_response_body;
@@ -51,6 +52,8 @@ pub mod opentelemetry;
 
 pub(crate) mod util;
 
+#[cfg(feature = "compression")]
+pub mod compress_adapter;
 #[cfg(feature = "compression")]
 pub mod compression;
 #[cfg(feature = "compression")]

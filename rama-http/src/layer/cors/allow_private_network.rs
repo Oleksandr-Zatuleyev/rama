@@ -113,11 +113,11 @@ impl Default for AllowPrivateNetworkInner {
 mod tests {
     use super::AllowPrivateNetwork;
 
+    use crate::Body;
     use crate::dep::http::{
-        header::ORIGIN, request::Parts, HeaderName, HeaderValue, Request, Response,
+        HeaderName, HeaderValue, Request, Response, header::ORIGIN, request::Parts,
     };
     use crate::layer::cors::CorsLayer;
-    use crate::Body;
     use rama_core::error::BoxError;
     use rama_core::service::service_fn;
     use rama_core::{Context, Layer, Service};
@@ -134,7 +134,7 @@ mod tests {
     async fn cors_private_network_header_is_added_correctly() {
         let service = CorsLayer::new()
             .allow_private_network(true)
-            .layer(service_fn(echo));
+            .into_layer(service_fn(echo));
 
         let req = Request::builder()
             .header(REQUEST_PRIVATE_NETWORK.clone(), TRUE.clone())
@@ -158,7 +158,7 @@ mod tests {
             });
         let service = CorsLayer::new()
             .allow_private_network(allow_private_network)
-            .layer(service_fn(echo));
+            .into_layer(service_fn(echo));
 
         let req = Request::builder()
             .header(ORIGIN, "localhost")

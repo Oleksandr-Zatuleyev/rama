@@ -2,12 +2,12 @@ use crate::client::proxy::layer::HttpProxyError;
 
 use super::InnerHttpProxyConnector;
 use rama_core::{
+    Context, Service,
     combinators::Either,
     error::{BoxError, ErrorExt, OpaqueError},
-    Context, Service,
 };
 use rama_http_core::upgrade;
-use rama_http_types::headers::ProxyAuthorization;
+use rama_http_types::{Version, headers::ProxyAuthorization};
 use rama_net::{
     address::ProxyAddress,
     client::{ConnectorService, EstablishedClientConnection},
@@ -26,6 +26,7 @@ use rama_net::tls::TlsTunnel;
 /// This behaviour is optional and only triggered in case there
 /// is a [`ProxyAddress`] found in the [`Context`].
 pub struct HttpProxyConnector<S> {
+    version: Option<Version>,
     inner: S,
     required: bool,
 }
@@ -42,6 +43,7 @@ impl<S: fmt::Debug> fmt::Debug for HttpProxyConnector<S> {
 impl<S: Clone> Clone for HttpProxyConnector<S> {
     fn clone(&self) -> Self {
         Self {
+            version: self.version,
             inner: self.inner.clone(),
             required: self.required,
         }
@@ -50,8 +52,40 @@ impl<S: Clone> Clone for HttpProxyConnector<S> {
 
 impl<S> HttpProxyConnector<S> {
     /// Creates a new [`HttpProxyConnector`].
+    ///
+    /// Protocol version is set to HTTP/1.1 by default.
     pub(super) fn new(inner: S, required: bool) -> Self {
-        Self { inner, required }
+        Self {
+            inner,
+            required,
+            version: Some(Version::HTTP_11),
+        }
+    }
+
+    /// Set the HTTP version to use for the CONNECT request.
+    ///
+    /// By default this is set to HTTP/1.1.
+    pub fn with_version(mut self, version: Version) -> Self {
+        self.version = Some(version);
+        self
+    }
+
+    /// Set the HTTP version to use for the CONNECT request.
+    pub fn set_version(&mut self, version: Version) -> &mut Self {
+        self.version = Some(version);
+        self
+    }
+
+    /// Set the HTTP version to auto detect for the CONNECT request.
+    pub fn with_auto_version(mut self) -> Self {
+        self.version = None;
+        self
+    }
+
+    /// Set the HTTP version to auto detect for the CONNECT request.
+    pub fn set_auto_version(&mut self) -> &mut Self {
+        self.version = None;
+        self
     }
 
     /// Create a new [`HttpProxyConnector`]
@@ -144,34 +178,24 @@ where
                 return if self.required {
                     Err("http proxy required but none is defined".into())
                 } else {
-                    tracing::trace!("http proxy connector: no proxy required or set: proceed with direct connection");
-                    let EstablishedClientConnection {
-                        ctx,
-                        req,
-                        conn,
-                        addr,
-                    } = established_conn;
+                    tracing::trace!(
+                        "http proxy connector: no proxy required or set: proceed with direct connection"
+                    );
+                    let EstablishedClientConnection { ctx, req, conn } = established_conn;
                     return Ok(EstablishedClientConnection {
                         ctx,
                         req,
                         conn: Either::A(conn),
-                        addr,
                     });
                 };
             }
         };
         // and do the handshake otherwise...
 
-        let EstablishedClientConnection {
-            ctx,
-            req,
-            conn,
-            addr,
-        } = established_conn;
+        let EstablishedClientConnection { ctx, req, conn } = established_conn;
 
         tracing::trace!(
             authority = %transport_ctx.authority,
-            proxy_addr = %addr,
             "http proxy connector: connected to proxy",
         );
 
@@ -188,11 +212,14 @@ where
                 ctx,
                 req,
                 conn: Either::A(conn),
-                addr,
             });
         }
 
         let mut connector = InnerHttpProxyConnector::new(transport_ctx.authority.clone())?;
+        match self.version {
+            Some(version) => connector.set_version(version),
+            None => connector.set_auto_version(),
+        };
 
         if let Some(credential) = address.credential.clone() {
             match credential {
@@ -212,14 +239,12 @@ where
 
         tracing::trace!(
             authority = %transport_ctx.authority,
-            proxy_addr = %addr,
             "http proxy connector: connected to proxy: ready secure request",
         );
         Ok(EstablishedClientConnection {
             ctx,
             req,
             conn: Either::B(conn),
-            addr,
         })
     }
 }

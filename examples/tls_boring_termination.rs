@@ -34,8 +34,9 @@
 
 // rama provides everything out of the box to build a TLS termination proxy
 use rama::{
+    Context, Layer,
     graceful::Shutdown,
-    http::{server::HttpServer, Request, Response},
+    http::{Request, Response, server::HttpServer},
     layer::{ConsumeErrLayer, GetExtensionLayer},
     net::{
         forwarded::Forwarded,
@@ -55,13 +56,12 @@ use rama::{
         boring::server::{TlsAcceptorData, TlsAcceptorLayer},
         types::SecureTransport,
     },
-    Context, Layer,
 };
 
 // everything else is provided by the standard library, community crates or tokio
 use std::{convert::Infallible, time::Duration};
 use tracing::metadata::LevelFilter;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[tokio::main]
 async fn main() {
@@ -81,17 +81,17 @@ async fn main() {
     let shutdown = Shutdown::default();
 
     // create tls proxy
-    shutdown.spawn_task_fn(|guard| async move {
+    shutdown.spawn_task_fn(async move |guard| {
         let tcp_service = (
             TlsAcceptorLayer::new(acceptor_data).with_store_client_hello(true),
-            GetExtensionLayer::new(|st: SecureTransport| async move {
+            GetExtensionLayer::new(async move |st: SecureTransport| {
                 let client_hello = st.client_hello().unwrap();
                 tracing::debug!(?client_hello, "secure connection established");
             }),
         )
-            .layer(Forwarder::new(([127, 0, 0, 1], 62801)).connector(
+            .into_layer(Forwarder::new(([127, 0, 0, 1], 62801)).connector(
                 // ha proxy protocol used to forwarded the client original IP
-                HaProxyClientLayer::tcp().layer(TcpConnector::new()),
+                HaProxyClientLayer::tcp().into_layer(TcpConnector::new()),
             ));
 
         TcpListener::bind("127.0.0.1:63801")
@@ -102,12 +102,12 @@ async fn main() {
     });
 
     // create http server
-    shutdown.spawn_task_fn(|guard| async {
+    shutdown.spawn_task_fn(async |guard| {
         let exec = Executor::graceful(guard.clone());
         let http_service = HttpServer::auto(exec).service(service_fn(http_service));
 
         let tcp_service =
-            (ConsumeErrLayer::default(), HaProxyServerLayer::new()).layer(http_service);
+            (ConsumeErrLayer::default(), HaProxyServerLayer::new()).into_layer(http_service);
 
         TcpListener::bind("127.0.0.1:62801")
             .await

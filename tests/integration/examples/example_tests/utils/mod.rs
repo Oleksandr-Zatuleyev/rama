@@ -1,23 +1,23 @@
 #![allow(dead_code)]
 
 use rama::{
+    Layer, Service,
     error::BoxError,
     http::client::proxy::layer::SetProxyAuthHttpHeaderLayer,
     http::service::client::{HttpClientExt, IntoUrl, RequestBuilder},
     http::{
-        client::HttpClient,
+        Request, Response,
+        client::EasyHttpWebClient,
         layer::{
             follow_redirect::FollowRedirectLayer,
             required_header::AddRequiredRequestHeadersLayer,
             retry::{ManagedPolicy, RetryLayer},
             trace::TraceLayer,
         },
-        Request, Response,
     },
     layer::MapResultLayer,
     service::BoxService,
     utils::{backoff::ExponentialBackoff, rng::HasherRng},
-    Layer, Service,
 };
 use std::{
     process::{Child, ExitStatus},
@@ -25,18 +25,18 @@ use std::{
     time::Duration,
 };
 use tracing::level_filters::LevelFilter;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[cfg(feature = "compression")]
 use rama::http::layer::decompression::DecompressionLayer;
 
 #[cfg(any(feature = "rustls", feature = "boring"))]
 use rama::net::tls::{
-    client::{ClientConfig, ClientHelloExtension, ServerVerifyMode},
     ApplicationProtocol,
+    client::{ClientConfig, ClientHelloExtension, ServerVerifyMode},
 };
 
-type ClientService<State> = BoxService<State, Request, Response, BoxError>;
+pub(super) type ClientService<State> = BoxService<State, Request, Response, BoxError>;
 
 /// Runner for examples.
 pub(super) struct ExampleRunner<State = ()> {
@@ -92,7 +92,7 @@ where
             .spawn()
             .unwrap();
 
-        let mut inner_client = HttpClient::default();
+        let mut inner_client = EasyHttpWebClient::default();
 
         #[cfg(any(feature = "rustls", feature = "boring"))]
         {
@@ -133,13 +133,17 @@ where
             AddRequiredRequestHeadersLayer::default(),
             SetProxyAuthHttpHeaderLayer::default(),
         )
-            .layer(inner_client)
+            .into_layer(inner_client)
             .boxed();
 
         Self {
             server_process: child,
             client,
         }
+    }
+
+    pub(super) fn set_client(&mut self, client: ClientService<State>) {
+        self.client = client;
     }
 
     /// Create a `GET` http request to be sent to the child server.

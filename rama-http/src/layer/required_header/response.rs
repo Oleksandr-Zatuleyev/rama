@@ -3,9 +3,9 @@
 //! For now this only sets `Server` and `Date` heades.
 
 use crate::{
+    HeaderValue, Request, Response,
     header::{self, DATE, RAMA_ID_HEADER_VALUE, SERVER},
     headers::{Date, HeaderMapExt},
-    HeaderValue, Request, Response,
 };
 use rama_core::{Context, Layer, Service};
 use rama_utils::macros::define_inner_service_accessors;
@@ -80,6 +80,14 @@ impl<S> Layer<S> for AddRequiredResponseHeadersLayer {
             inner,
             overwrite: self.overwrite,
             server_header_value: self.server_header_value.clone(),
+        }
+    }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        AddRequiredResponseHeaders {
+            inner,
+            overwrite: self.overwrite,
+            server_header_value: self.server_header_value,
         }
     }
 }
@@ -206,13 +214,13 @@ where
 mod tests {
     use super::*;
     use crate::Body;
-    use rama_core::{service::service_fn, Layer};
+    use rama_core::{Layer, service::service_fn};
     use std::convert::Infallible;
 
     #[tokio::test]
     async fn add_required_response_headers() {
-        let svc = AddRequiredResponseHeadersLayer::default().layer(service_fn(
-            |_ctx: Context<()>, req: Request| async move {
+        let svc = AddRequiredResponseHeadersLayer::default().into_layer(service_fn(
+            async |_ctx: Context<()>, req: Request| {
                 assert!(!req.headers().contains_key(SERVER));
                 assert!(!req.headers().contains_key(DATE));
                 Ok::<_, Infallible>(Response::new(Body::empty()))
@@ -233,7 +241,7 @@ mod tests {
     async fn add_required_response_headers_custom_server() {
         let svc = AddRequiredResponseHeadersLayer::default()
             .server_header_value(HeaderValue::from_static("foo"))
-            .layer(service_fn(|_ctx: Context<()>, req: Request| async move {
+            .into_layer(service_fn(async |_ctx: Context<()>, req: Request| {
                 assert!(!req.headers().contains_key(SERVER));
                 assert!(!req.headers().contains_key(DATE));
                 Ok::<_, Infallible>(Response::new(Body::empty()))
@@ -253,7 +261,7 @@ mod tests {
     async fn add_required_response_headers_overwrite() {
         let svc = AddRequiredResponseHeadersLayer::new()
             .overwrite(true)
-            .layer(service_fn(|_ctx: Context<()>, req: Request| async move {
+            .into_layer(service_fn(async |_ctx: Context<()>, req: Request| {
                 assert!(!req.headers().contains_key(SERVER));
                 assert!(!req.headers().contains_key(DATE));
                 Ok::<_, Infallible>(
@@ -280,7 +288,7 @@ mod tests {
         let svc = AddRequiredResponseHeadersLayer::new()
             .overwrite(true)
             .server_header_value(HeaderValue::from_static("foo"))
-            .layer(service_fn(|_ctx: Context<()>, req: Request| async move {
+            .into_layer(service_fn(async |_ctx: Context<()>, req: Request| {
                 assert!(!req.headers().contains_key(SERVER));
                 assert!(!req.headers().contains_key(DATE));
                 Ok::<_, Infallible>(

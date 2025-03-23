@@ -1,8 +1,8 @@
 use super::BytesRejection;
+use crate::Request;
 use crate::dep::http_body_util::BodyExt;
 use crate::service::web::extract::FromRequest;
 use crate::utils::macros::{composite_http_rejection, define_http_rejection};
-use crate::Request;
 use rama_utils::macros::impl_deref;
 
 /// Extractor to get the response body, collected as [`String`].
@@ -64,12 +64,12 @@ impl FromRequest for Text {
 mod test {
     use super::*;
     use crate::service::web::WebService;
-    use crate::{header, Method, Request, StatusCode};
+    use crate::{Method, Request, StatusCode, header};
     use rama_core::{Context, Service};
 
     #[tokio::test]
     async fn test_text() {
-        let service = WebService::default().post("/", |Text(body): Text| async move {
+        let service = WebService::default().post("/", async |Text(body): Text| {
             assert_eq!(body, "test");
         });
 
@@ -84,8 +84,7 @@ mod test {
 
     #[tokio::test]
     async fn test_text_missing_content_type() {
-        let service =
-            WebService::default().post("/", |Text(_): Text| async move { StatusCode::OK });
+        let service = WebService::default().post("/", async |Text(_): Text| StatusCode::OK);
 
         let req = Request::builder()
             .method(Method::POST)
@@ -97,8 +96,7 @@ mod test {
 
     #[tokio::test]
     async fn test_text_incorrect_content_type() {
-        let service =
-            WebService::default().post("/", |Text(_): Text| async move { StatusCode::OK });
+        let service = WebService::default().post("/", async |Text(_): Text| StatusCode::OK);
 
         let req = Request::builder()
             .method(Method::POST)
@@ -111,8 +109,7 @@ mod test {
 
     #[tokio::test]
     async fn test_text_invalid_utf8() {
-        let service =
-            WebService::default().post("/", |Text(_): Text| async move { StatusCode::OK });
+        let service = WebService::default().post("/", async |Text(_): Text| StatusCode::OK);
 
         let req = Request::builder()
             .method(Method::POST)

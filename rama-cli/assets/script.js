@@ -22,29 +22,74 @@ async function fetchWithBackoff(url, options) {
     throw new Error('Max retries exceeded');
 }
 
-// Function to make a GET request
-async function makeGetRequest(url) {
-    const headers = {
-        'x-CusToM-HEADER': `rama-fp${Date.now()}`,
-        'x-CusToM-HEADER-eXtRa': `rama-fpeXtRa-${Date.now()}`,
+function getJsProfile() {
+    return {
+        navigator: {
+            appCodeName: window.navigator?.appCodeName,
+            appName: window.navigator?.appName,
+            appVersion: window.navigator?.appVersion,
+            buildID: window.navigator?.buildID,
+            cookieEnabled: window.navigator?.cookieEnabled,
+            doNotTrack: window.navigator?.doNotTrack,
+            language: window.navigator?.language,
+            languages: window.navigator?.languages,
+            oscpu: window.navigator?.oscpu,
+            pdfViewerEnabled: window.navigator?.pdfViewerEnabled,
+            platform: window.navigator?.platform,
+            product: window.navigator?.product,
+            productSub: window.navigator?.productSub,
+            userAgent: window.navigator?.userAgent,
+            vendor: window.navigator?.vendor,
+            vendorSub: window.navigator?.vendorSub,
+        },
+        screen: {
+            width: window.screen?.width,
+            height: window.screen?.height,
+            availWidth: window.screen?.availWidth,
+            availHeight: window.screen?.availHeight,
+            availLeft: window.screen?.availLeft,
+            left: window.screen?.left,
+            availTop: window.screen?.availTop,
+            top: window.screen?.top,
+            colorDepth: window.screen?.colorDepth,
+            pixelDepth: window.screen?.pixelDepth,
+            type: window.screen?.type,
+            mozOrientation: window.screen?.mozOrientation,
+            mozBrightness: window.screen?.mozBrightness,
+            lockOrientation: window.screen?.lockOrientation,
+            unlockOrientation: window.screen?.unlockOrientation,
+        },
     };
+}
 
-    const options = {
-        method: 'GET',
-        headers
+function getSourceInfo() {
+    // Extract source information from cookies
+    function getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+        return null;
+    }
+
+    return {
+        deviceName: getCookie('source-device-name'),
+        os: getCookie('source-os-name'),
+        osVersion: getCookie('source-os-version'),
+        browserName: getCookie('source-browser-name'),
+        browserVersion: getCookie('source-browser-version')
     };
-
-    return fetchWithBackoff(url, options);
 }
 
 // Function to make a POST request
 async function makePostRequest(url, number) {
     const headers = {
-        'x-CusToM-HEADER': `rama-fp${Date.now()}`,
-        'x-CusToM-HEADER-eXtRa': `rama-fpeXtRa-${Date.now()}`,
+        'x-RAMA-custom-header-marker': `rama-fp${Date.now()}`,
     };
 
-    const body = JSON.stringify({ number });
+    const jsWebApis = getJsProfile();
+    const sourceInfo = getSourceInfo();
+
+    const body = JSON.stringify({ number, jsWebApis, sourceInfo });
 
     const options = {
         method: 'POST',
@@ -60,8 +105,7 @@ function makeRequestWithXHR(url, method, number) {
     return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
         xhr.open(method, url);
-        xhr.setRequestHeader('x-CusToM-HEADER', `rama-fp${Date.now()}`);
-        xhr.setRequestHeader('x-CusToM-HEADER-eXtRa', `rama-fpeXtRa-${Date.now()}`);
+        xhr.setRequestHeader('x-RAMA-custom-header-marker', `rama-fp${Date.now()}`);
 
         xhr.onload = function () {
             if (xhr.status >= 200 && xhr.status < 300) {
@@ -82,20 +126,20 @@ function makeRequestWithXHR(url, method, number) {
 // Main function to execute the requests
 async function main() {
     try {
-        // Fetch GET request
-        const response1 = await makeGetRequest('/api/fetch/number');
-        const { number } = await response1.json();
+        // Generate random numbers for the requests
+        const number = Math.floor(Math.random() * 1000) + 1;
+        const number2 = Math.floor(Math.random() * 1000) + 1;
+
+        console.log('Generated random numbers:', number, number2);
 
         // Fetch POST request
         const response2 = await makePostRequest(`/api/fetch/number/${number}`, number);
+        console.log('Fetch POST request response:', response2);
         const result = await response2.json();
-
-        // XMLHttpRequest GET request
-        const response3 = await makeRequestWithXHR('/api/xml/number', 'GET');
-        const { number: number2 } = JSON.parse(response3);
 
         // XMLHttpRequest POST request
         const response4 = await makeRequestWithXHR(`/api/xml/number/${number2}`, 'POST', number2);
+        console.log('XMLHttpRequest POST request response:', response4);
         const result2 = JSON.parse(response4);
 
         console.log('Requests completed successfully');

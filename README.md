@@ -16,10 +16,10 @@
 [license-mit-url]: https://github.com/plabayo/rama/blob/main/LICENSE-MIT
 [license-apache-badge]: https://img.shields.io/badge/license-APACHE-blue.svg
 [license-apache-url]: https://github.com/plabayo/rama/blob/main/LICENSE-APACHE
-[rust-version-badge]: https://img.shields.io/badge/rustc-1.84+-blue?style=flat-square&logo=rust
+[rust-version-badge]: https://img.shields.io/badge/rustc-1.85+-blue?style=flat-square&logo=rust
 [rust-version-url]: https://www.rust-lang.org
-[actions-badge]: https://github.com/plabayo/rama/workflows/CI/badge.svg
-[actions-url]: https://github.com/plabayo/rama/actions
+[actions-badge]: https://github.com/plabayo/rama/actions/workflows/CI.yml/badge.svg?branch=main
+[actions-url]: https://github.com/plabayo/rama/actions/workflows/CI.yml
 [loc-badge]: https://img.shields.io/endpoint?url=https://ghloc.vercel.app/api/plabayo/rama/badge?filter=.rs$&style=flat&logoColor=white&label=LoC
 [loc-url]: https://github.com/plabayo/rama
 
@@ -31,8 +31,6 @@
 [ghs-url]: https://github.com/sponsors/plabayo
 [paypal-badge]: https://img.shields.io/badge/paypal-contribution?style=for-the-badge&color=blue
 [paypal-url]: https://www.paypal.com/donate/?hosted_button_id=P3KCGT2ACBVFE
-[polar-badge]: https://img.shields.io/badge/polar.sh-subscribe?style=for-the-badge&color=blue
-[polar-url]: https://polar.sh/plabayo
 
 🦙 Rama (ラマ) is a modular service framework for the 🦀 Rust language to move and transform your network packets.
 
@@ -72,7 +70,6 @@ Rama is async-first using [Tokio](https://tokio.rs/) as its _only_ Async Runtime
 Please refer to [the examples found in the `/examples` dir](https://github.com/plabayo/rama/tree/main/examples)
 to get inspired on how you can use it for your purposes.
 
-[![Polar Subscribe][polar-badge]][polar-url]
 [![GitHub Sponsors][ghs-badge]][ghs-url]
 [![Buy Me A Coffee][bmac-badge]][bmac-url]
 [![Paypal Donation][paypal-badge]][paypal-url]
@@ -84,33 +81,33 @@ to get inspired on how you can use it for your purposes.
 > To learn more about sponsorship opportunities, please refer to [the "Sponsors" section below](#--sponsors)
 > or contact us directly at [sponsor@ramaproxy.org](mailto:sponsor@ramaproxy.org).
 
-This framework comes with 🔋 batteries included, giving you the full freedome to build the middleware and services you want, without _having_ to repeat the "common":
+This framework comes with 🔋 batteries included, giving you the full freedom to build the middleware and services you want, without _having_ to repeat the "common":
 
 | category | support list |
 |-|-|
 | ✅ [transports](https://ramaproxy.org/docs/rama/net/stream/index.html) | ✅ [tcp](https://ramaproxy.org/docs/rama/tcp/index.html) ⸱ 🏗️ udp <sup>(2)</sup> ⸱ ✅ [middleware](https://ramaproxy.org/docs/rama/net/stream/layer/index.html) |
 | ✅ [http](https://ramaproxy.org/docs/rama/http/index.html) | ✅ [auto](https://ramaproxy.org/docs/rama/http/server/service/struct.HttpServer.html#method.auto) ⸱ ✅ [http/1.1](https://ramaproxy.org/docs/rama/http/server/service/struct.HttpServer.html#method.http1) ⸱ ✅ [h2](https://ramaproxy.org/docs/rama/http/server/service/struct.HttpServer.html#method.h2) ⸱ 🏗️ h3 <sup>(2)</sup> ⸱ ✅ [middleware](https://ramaproxy.org/docs/rama/http/layer/index.html) |
 | ✅ web server | ✅ [fs](https://ramaproxy.org/docs/rama/http/service/fs/index.html) ⸱ ✅ [redirect](https://ramaproxy.org/docs/rama/http/service/redirect/struct.Redirect.html) ⸱ ✅ [dyn router](https://ramaproxy.org/docs/rama/http/service/web/struct.WebService.html) ⸱ ✅ [static router](https://docs.rs/rama-http/latest/rama_http/service/web/macro.match_service.html) ⸱ ✅ [handler extractors](https://ramaproxy.org/docs/rama/http/service/web/extract/index.html) ⸱ ✅ [k8s healthcheck](https://ramaproxy.org/docs/rama/http/service/web/k8s/index.html) |
-| ✅ http [client](https://ramaproxy.org/docs/rama/http/client/index.html) | ✅ [client](https://ramaproxy.org/docs/rama/http/client/struct.HttpClient.html) ⸱ ✅ [high level API](https://ramaproxy.org/docs/rama/http/service/client/trait.HttpClientExt.html) ⸱ ✅ [Proxy Connect](https://ramaproxy.org/docs/rama/http/client/proxy/layer/struct.HttpProxyConnector.html) ⸱ ❌ [Chromium Http](https://github.com/plabayo/rama/issues/189) <sup>(3)</sup> |
+| ✅ http [client](https://ramaproxy.org/docs/rama/http/client/index.html) | ✅ [easy client](https://ramaproxy.org/docs/rama/http/client/struct.EasyHttpWebClient.html) ⸱ ✅ [high level API](https://ramaproxy.org/docs/rama/http/service/client/trait.HttpClientExt.html) ⸱ ✅ [Proxy Connect](https://ramaproxy.org/docs/rama/http/client/proxy/layer/struct.HttpProxyConnector.html) ⸱ ❌ [Chromium Http](https://github.com/plabayo/rama/issues/189) <sup>(3)</sup> |
 | ✅ [tls](https://ramaproxy.org/docs/rama/tls/index.html) | ✅ [Rustls](https://ramaproxy.org/docs/rama/tls/rustls/index.html) ⸱ ✅ [BoringSSL](https://ramaproxy.org/docs/rama/tls/boring/index.html) ⸱ ❌ NSS <sup>(3)</sup> |
 | ✅ [dns](https://ramaproxy.org/docs/rama/dns/index.html) | ✅ [DNS Resolver](https://ramaproxy.org/docs/rama/dns/trait.DnsResolver.html) |
-| ✅ [proxy protocols](https://ramaproxy.org/docs/rama/proxy/index.html) | ✅ [PROXY protocol](https://ramaproxy.org/docs/rama/proxy/haproxy/index.html) ⸱ ✅ [http proxy](https://github.com/plabayo/rama/blob/main/examples/http_connect_proxy.rs) ⸱ ✅ [https proxy](https://github.com/plabayo/rama/blob/main/examples/https_connect_proxy.rs) ⸱ 🏗️ SOCKS5 <sup>(1)</sup> ⸱ 🏗️ SOCKS5H <sup>(1)</sup> |
-| 🏗️ web protocols | 🏗️ Web Sockets (WS) <sup>(1)</sup> ⸱ 🏗️ WSS <sup>(1)</sup> ⸱ ❌ Web Transport <sup>(3)</sup> ⸱ ❌ gRPC <sup>(3)</sup> |
+| ✅ [proxy protocols](https://ramaproxy.org/docs/rama/proxy/index.html) | ✅ [PROXY protocol](https://ramaproxy.org/docs/rama/proxy/haproxy/index.html) ⸱ ✅ [http proxy](https://github.com/plabayo/rama/blob/main/examples/http_connect_proxy.rs) ⸱ ✅ [https proxy](https://github.com/plabayo/rama/blob/main/examples/https_connect_proxy.rs) ⸱ 🏗️ SOCKS5 <sup>(2)</sup> ⸱ 🏗️ SOCKS5H <sup>(2)</sup> |
+| 🏗️ web protocols | 🏗️ Web Sockets (WS) <sup>(2)</sup> ⸱ 🏗️ WSS <sup>(2)</sup> ⸱ ❌ Web Transport <sup>(3)</sup> ⸱ ❌ gRPC <sup>(3)</sup> |
 | ✅ [async-method trait](https://blog.rust-lang.org/inside-rust/2023/05/03/stabilizing-async-fn-in-trait.html) services | ✅ [Service](https://ramaproxy.org/docs/rama/service/trait.Service.html) ⸱ ✅ [Layer](https://ramaproxy.org/docs/rama/layer/trait.Layer.html) ⸱ ✅ [context](https://ramaproxy.org/docs/rama/context/index.html) ⸱ ✅ [dyn dispatch](https://ramaproxy.org/docs/rama/service/struct.BoxService.html) ⸱ ✅ [middleware](https://ramaproxy.org/docs/rama/layer/index.html) |
 | ✅ [telemetry](https://ramaproxy.org/docs/rama/telemetry/index.html) | ✅ [tracing](https://tracing.rs/tracing/) ⸱ ✅ [opentelemetry](https://ramaproxy.org/docs/rama/telemetry/opentelemetry/index.html) ⸱ ✅ [http metrics](https://ramaproxy.org/docs/rama/http/layer/opentelemetry/index.html) ⸱ ✅ [transport metrics](https://ramaproxy.org/docs/rama/net/stream/layer/opentelemetry/index.html) |
 | ✅ upstream [proxies](https://ramaproxy.org/docs/rama/proxy/index.html) | ✅ [MemoryProxyDB](https://ramaproxy.org/docs/rama/proxy/struct.MemoryProxyDB.html) ⸱ ✅ [L4 Username Config](https://ramaproxy.org/docs/rama/username/index.html) ⸱ ✅ [Proxy Filters](https://ramaproxy.org/docs/rama/proxy/struct.ProxyFilter.html) |
-| 🏗️ [User Agent (UA)](https://ramaproxy.org/book/intro/user_agent) | 🏗️ Http Emulation <sup>(1)</sup> ⸱ 🏗️ Tls Emulation <sup>(1)</sup> ⸱ ✅ [UA Parsing](https://ramaproxy.org/docs/rama/ua/struct.UserAgent.html) |
+| ✅ [User Agent (UA)](https://ramaproxy.org/book/intro/user_agent) | ✅ [Http Emulation](https://ramaproxy.org/docs/rama/ua/profile/struct.HttpProfile.html) ⸱ ✅ [Tls Emulation](https://ramaproxy.org/docs/rama/ua/profile/struct.TlsProfile.html) ⸱ ✅ [UA Parsing](https://ramaproxy.org/docs/rama/ua/struct.UserAgent.html) |
 | ✅ [Fingerprinting](https://ramaproxy.org/docs/rama/net/fingerprint/index.html) | ✅ [Ja3](https://ramaproxy.org/docs/rama/net/fingerprint/struct.Ja3.html) ⸱ ✅ [Ja4](https://ramaproxy.org/docs/rama/net/fingerprint/struct.Ja4.html) ⸱ ✅ [Ja4H](https://ramaproxy.org/docs/rama/net/fingerprint/struct.Ja4H.html) |
 | ✅ utilities | ✅ [error handling](https://ramaproxy.org/docs/rama/error/index.html) ⸱ ✅ [graceful shutdown](https://ramaproxy.org/docs/rama/graceful/index.html) ⸱ 🏗️ Connection Pool <sup>(1)</sup> ⸱ 🏗️ IP2Loc <sup>(2)</sup> |
-| 🏗️ [TUI](https://ratatui.rs/) | 🏗️ traffic logger <sup>(2)</sup> ⸱ 🏗️ curl export <sup>(2)</sup> ⸱ ❌ traffic intercept <sup>(3)</sup> ⸱ ❌ traffic replay <sup>(3)</sup> |
+| 🏗️ Graphical Interface | 🏗️ traffic logger <sup>(2)</sup> ⸱ 🏗️ curl export <sup>(2)</sup> ⸱ 🏗️ [TUI implementation](https://ratatui.rs/) <sup>(2)</sup> ⸱ ❌ traffic intercept <sup>(3)</sup> ⸱ ❌ traffic replay <sup>(3)</sup> |
 | ✅ binary | ✅ [prebuilt binaries](https://ramaproxy.org/book/deploy/rama-cli) ⸱ 🏗️ proxy config <sup>(2)</sup> ⸱ ✅ http client ⸱ ❌ WASM Plugins <sup>(3)</sup> |
 | 🏗️ data scraping | 🏗️ Html Processor <sup>(2)</sup> ⸱ ❌ Json Processor <sup>(3)</sup> |
 | ❌ browser | ❌ JS Engine <sup>(3)</sup> ⸱ ❌ [Web API](https://developer.mozilla.org/en-US/docs/Web/API) Emulation <sup>(3)</sup> |
 
 > 🗒️ _Footnotes_
 >
-> * <sup>(1)</sup> Part of [`v0.2.0` milestone (ETA: 2025 mid Q1)](https://github.com/plabayo/rama/milestone/1)
-> * <sup>(2)</sup> Part of [`v0.3.0` milestone (ETA: 2025 end Q2)](https://github.com/plabayo/rama/milestone/2)
+> * <sup>(1)</sup> Part of [`v0.2.0` milestone (ETA: 2025 Q2)](https://github.com/plabayo/rama/milestone/1)
+> * <sup>(2)</sup> Part of [`v0.3.0` milestone (ETA: 2025 Q3)](https://github.com/plabayo/rama/milestone/2)
 > * <sup>(3)</sup> No immediate plans, but on our radar. Please [open an issue](https://github.com/plabayo/rama/issues) to request this feature if you have an immediate need for it. Please add sufficient motivation/reasoning and consider [becoming a sponsor](#--sponsors) to help accelerate its priority.
 
 The primary focus of Rama is to aid you in your development of [proxies](https://ramaproxy.org/book/proxies/intro.html):
@@ -166,6 +163,9 @@ Next to proxies, Rama can also be used to develop [Web Services](#--web-services
 
 💬 Come join us at [Discord][discord-url] on the `#rama` public channel. To ask questions, discuss ideas and ask how rama may be useful for you.
 
+> Rama also has a public channel on the official Discord of the tokio project.
+> Feel free to join us there instead or as well: <https://discord.com/channels/500028886025895936/1349098858831024209>
+
 ## ⌨️ | `rama` binary
 
 The `rama` binary allows you to use a lot of what `rama` has to offer without
@@ -183,11 +183,11 @@ in production by ourselves and others alike. This is great as it gives us new pe
 and grow the framework. It does mean however that there are still several non-backward compatible releases that will follow `0.2`.
 
 In the meanwhile the async ecosystem of Rust is also maturing, and edition 2024 is also to be expected as a 2024 end of year gift.
-It goes also without saying that we do not nilly-willy change designs or break on purpose. The core design is by now also well defined. But truth has to be said,
-there is still plenty to be improve and work out. Production use and feedback from you and other users helps a lot with that. As such,
+It goes also without saying that we do not willy-nilly change designs or break on purpose. The core design is by now also well defined. But truth has to be said,
+there is still plenty to be improved and worked out. Production use and feedback from you and other users helps a lot with that. As such,
 if you use Rama do let us know feedback over [Discord][discord-url], [email](mailto:glen@plabayo.tech) or a [GitHub issue](https://github.com/plabayo/rama/issues).
 
-👉 If you are a company or enterprise that makes use of Rama, or even an individual user that makes use of Rama for commcercial purposes. Please consider becoming [a business/enterprise subscriber](https://polar.sh/plabayo). It helps make the development cycle to remain sustainable, and is beneficial to you as well. As part of your benefits we are also available to assist you with migrations between breaking releases. For enterprise users we can even make time to develop those PR's in your integration codebases ourselves on your behalf. A win for everybody. 💪
+👉 If you are a company or enterprise that makes use of Rama, or even an individual user that makes use of Rama for commercial purposes. Please consider becoming [a business/enterprise subscriber](https://github.com/sponsors/plabayo/sponsorships?tier_id=300734). It helps make the development cycle to remain sustainable, and is beneficial to you as well. As part of your benefits we are also available to assist you with migrations between breaking releases. For enterprise users we can even make time to develop those PR's in your integration codebases ourselves on your behalf. A win for everybody. 💪
 
 ## 📣 | Rama Ecosystem
 
@@ -234,6 +234,16 @@ Here is a list of all `rama` crates:
 - [`rama-http`](https://crates.io/crates/rama-http): rama http services, layers and utilities
 - [`rama-http-backend`](https://crates.io/crates/rama-http-backend): default http backend for `rama`
 - [`rama-http-core`](https://crates.io/crates/rama-http-core): http protocol implementation driving `rama-http-backend`
+
+`rama` crates that live in <https://github.com/plabayo/rama-boring> (forks of `cloudflare/boring`):
+
+- [`rama-boring`](https://crates.io/crates/rama-boring): BoringSSL bindings for Rama
+- [`rama-boring-sys`](https://crates.io/crates/rama-boring-sys): FFI bindings to BoringSSL for Rama
+- [`rama-boring-tokio`](https://crates.io/crates/rama-boring-tokio): an implementation of SSL streams for Tokio backed by BoringSSL in function of Rama
+
+repositories in function of rama that aren't crates:
+
+- <https://github.com/plabayo/homebrew-rama>: Homebrew formula for the rama Cli tool
 
 ## 🏢 | Proxy Examples
 
@@ -307,13 +317,13 @@ automated processes look like a human.
 
 ## 🧑‍💻 | Http Clients
 
-In [The rama book](https://ramaproxy.org/book) you can read and learn that a big pillar of Rama's architecture is build on top of [the Service concept](https://ramaproxy.org/book/intro/services_all_the_way_down.html). A [`Service`][rama-service] takes as input a user-defined `State` (e.g. containing your database Pool) and a `Request`, and uses it to serve either a `Response` or `Error`. Such a [`Service`][rama-service] can produce the response "directly" (also called ☘️ Leaf services) or instead pass the request and state to an inner [`Service`][rama-service] which it wraps around (so called 🍔 Middlewares).
+In [The rama book](https://ramaproxy.org/book) you can read and learn that a big pillar of Rama's architecture is built on top of [the Service concept](https://ramaproxy.org/book/intro/services_all_the_way_down.html). A [`Service`][rama-service] takes as input a user-defined `State` (e.g. containing your database Pool) and a `Request`, and uses it to serve either a `Response` or `Error`. Such a [`Service`][rama-service] can produce the response "directly" (also called ☘️ Leaf services) or instead pass the request and state to an inner [`Service`][rama-service] which it wraps around (so called 🍔 Middlewares).
 
 [rama-service]: https://ramaproxy.org/docs/rama/service/trait.Service.html
 
 It's a powerful concept, originally introduced to Rust by [the Tower ecosystem](https://github.com/tower-rs/tower) and allows you build complex stacks specialised to your needs in a modular and easy manner. Even cooler is that this works for both clients and servers alike.
 
-Rama provides an [`HttpClient`](https://ramaproxy.org/docs/rama/http/client/struct.HttpClient.html) which sends your _Http_ `Request` over the network and returns the `Response` if it receives and read one or an `Error` otherwise. Combined with [the many Layers (middleware)](https://ramaproxy.org/docs/rama/http/layer/index.html) that `Rama` provides and perhaps also some developed by you it is possible to create a powerful _Http_ client suited to your needs.
+Rama provides an [`EasyHttpWebClient`](https://ramaproxy.org/docs/rama/http/client/struct.EasyHttpWebClient.html) which sends your _Http_ `Request` over the network and returns the `Response` if it receives and read one or an `Error` otherwise. Combined with [the many Layers (middleware)](https://ramaproxy.org/docs/rama/http/layer/index.html) that `Rama` provides and perhaps also some developed by you it is possible to create a powerful _Http_ client suited to your needs.
 
 As a 🍒 cherry on the cake you can import the [`HttpClientExt`](https://ramaproxy.org/docs/rama/http/service/client/trait.HttpClientExt.html) trait in your Rust module to be able to use your _Http_ Client [`Service`][rama-service] stack using a high level API to build and send requests with ease.
 
@@ -333,7 +343,7 @@ let client = (
     RetryLayer::new(
         ManagedPolicy::default().with_backoff(ExponentialBackoff::default()),
     ),
-).layer(HttpClient::default());
+).into_layer(EasyHttpWebClient::default());
 
 #[derive(Debug, Deserialize)]
 struct Info {
@@ -354,6 +364,21 @@ let info: Info = client
     .unwrap();
 ```
 
+## 💪 | Performance
+
+`rama`'s default http implementation is forked from [`hyper`] and adds very little
+overhead. So `rama`'s performance is comparable to [`hyper`] and frameworks that built on top of that.
+
+[`hyper`]: https://github.com/hyperium/hyper
+
+Here's a list of external benchmarks:
+
+- http server benchmark @ <https://web-frameworks-benchmark.netlify.app/result>
+
+Please [open an issue](https://github.com/plabayo/rama/issues) or Pull Request (PR) in case
+you are aware of any other benchmarks of interest in regards to http(s) servers,
+http(s) clients or proxies such as Man-In-The-Middle (MITM) proxies.
+
 ## ⛨ | Safety
 
 The rama crates avoid `unsafe_code`, but do make use of it for some low level primitives (e.g. http core)
@@ -372,12 +397,12 @@ on a variety of Linux systems. There is no windows support, and neither do we te
 | Linux    | ✅     | Ubuntu 22.04 ([GitHub Action](https://docs.github.com/en/actions/using-github-hosted-runners/about-github-hosted-runners/about-github-hosted-runners)) |
 
 Please [open a ticket](https://github.com/plabayo/rama/issues) in case you have compatibility issues for your setup/platform.
-Our goal is not to support all possible platformns in the world, but we do want to
+Our goal is not to support all possible platforms in the world, but we do want to
 support as many as we reasonably can.
 
 ### Minimum supported Rust version
 
-Rama's MSRV is `1.84`.
+Rama's MSRV is `1.85`.
 
 [Using GitHub Actions we also test](https://github.com/plabayo/rama/blob/main/.github/workflows/CI.yml) if `rama` on that version still works on
 the stable and beta versions of _rust_ as well.
@@ -425,7 +450,7 @@ if you are planning to pick it up, as to avoid multiple people trying to solve t
 >
 > Only once this R&D is complete and alignment is confirmed, shall the feature be started to be implemented.
 
-Should you want to contribure this project but you do not yet know how to program in Rust, you could start learning Rust with as goal to contribute as soon as possible to `rama` by using "[the Rust 101 Learning Guide](https://rust-lang.guide/)" as your study companion. Glen can also be hired as a mentor or teacher to give you paid 1-on-1 lessons and other similar consultancy services. You can find his contact details at <https://www.glendc.com/>.
+Should you want to contribute to this project but you do not yet know how to program in Rust, you could start learning Rust with as goal to contribute as soon as possible to `rama` by using "[the Rust 101 Learning Guide](https://rust-lang.guide/)" as your study companion. Glen can also be hired as a mentor or teacher to give you paid 1-on-1 lessons and other similar consultancy services. You can find his contact details at <https://www.glendc.com/>.
 
 ### Contribution
 
@@ -441,7 +466,7 @@ without any additional terms or conditions.
 
 Special thanks goes to all involved in developing, maintaining and supporting [the Rust programming language](https://www.rust-lang.org/), the [Tokio ecosystem](https://tokio.rs/) and [all other crates](./Cargo.toml) that we depend upon. This also includes [Hyper and its ecosystem](https://github.com/hyperium) as without those projects Rama would not be. The core http module of rama is a specialised fork of `hyper` and use the underlying `h2` and `h3` crates as dependencies.
 
-Extra credits also go to [Axum](https://github.com/tokio-rs/axum), from which ideas and code were copied as its a project very much in line with the kind of software we want Rama to be, but for a different purpose. Our hats also go off to [Tower][Tower], its inventors and all the people and creatures that help make it be every day. The service concept is derived from [Tower][Tower] and many of our layers are a [Tower][Tower] fork, adapted where required or desired.
+Extra credits also go to [Axum](https://github.com/tokio-rs/axum), from which ideas and code were copied as it's a project very much in line with the kind of software we want Rama to be, but for a different purpose. Our hats also go off to [Tower][Tower], its inventors and all the people and creatures that help make it be every day. The service concept is derived from [Tower][Tower] and many of our layers are a [Tower][Tower] fork, adapted where required or desired.
 
 An extra big shoutout goes also to the online communities surrounding and part of these ecosystems. They are a great place to hangout and always friendly and helpful. Thanks.
 
@@ -451,9 +476,7 @@ An extra big shoutout goes also to the online communities surrounding and part o
 
 Rama is **completely free, open-source software** which needs lots of effort and time to develop and maintain.
 
-You can become a regular financial contributor to Rama by paying for a monthly subscription at [polar.sh/plabayo](https://polar.sh/plabayo). In case you want a specific github issue to be resolved or like you can also fund issues via that platform. One time contributions are possible as well and greatly appreciated.
-
-Alternatively you can also become a (monthly subscriber) sponsor or pay a one-time donation via [Github Sponsors][ghs-url]. For one-time donations you are also free to use ["Buy me a Coffee"][bmac-url] or ["Paypal Donations"][paypal-url] in case you are more at ease with any of these.
+You can become a regular financial contributor to Rama by paying for a monthly subscription at [Github Sponsors][ghs-url]. One time contributions are possible as well.
 
 Sponsors help us continue to maintain and improve `rama`, as well as other
 Free and Open Source (FOSS) technology. It also helps us to create
@@ -489,7 +512,7 @@ We are grateful to both sponsors for sponsering us these cloud resources.
 
 ### Professional Services
 
-🤝 Enterprise support, software customisations, integrations, professional support, consultancy and training are available upon request by sending an email to [glen@plabayo.tech](mailto:glen@plabayo.tech). Or get an entireprise subscription at [polar.sh/plabayo](https://polar.sh/plabayo).
+🤝 Enterprise support, software customisations, integrations, professional support, consultancy and training are available upon request by sending an email to [glen@plabayo.tech](mailto:glen@plabayo.tech). Or get an enterprise subscription via [Gihub Sponsors](https://github.com/sponsors/plabayo/sponsorships?tier_id=300734).
 
 These type of contracts are another way for you to be able to support the project and
 at the same time get serviced for your own needs and purposes.
@@ -511,7 +534,7 @@ and on the 28th of February of 2024 they also open sourced it.
 Rama is not for everyone, but we sure hope it is right for you.
 If not, consider giving [`pingora`] a try, it might very well be the next best thing for you.
 
-Secondly, [ByteDance] has an open source proxy framework written in Rust to developer forward
+Secondly, [ByteDance] has an open source proxy framework written in Rust to develop forward
 and reverse proxies alike, named [`g3proxy`].
 
 [Cloudflare]: https://www.cloudflare.com/

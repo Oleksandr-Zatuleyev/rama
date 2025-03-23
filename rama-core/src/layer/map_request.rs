@@ -1,7 +1,6 @@
 use crate::{Context, Layer, Service};
 use rama_utils::macros::define_inner_service_accessors;
 use std::fmt;
-use std::future::Future;
 
 /// Composes a function *in front of* the service.
 ///
@@ -86,5 +85,9 @@ where
             f: self.f.clone(),
             inner,
         }
+    }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        MapRequest { f: self.f, inner }
     }
 }

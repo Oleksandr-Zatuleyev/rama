@@ -1,13 +1,12 @@
+use crate::Request;
 use crate::headers::{
     ForwardHeader, HeaderMapExt, Via, XForwardedFor, XForwardedHost, XForwardedProto,
 };
-use crate::Request;
 use rama_core::{Context, Layer, Service};
 use rama_net::forwarded::Forwarded;
 use rama_net::forwarded::ForwardedElement;
 use rama_utils::macros::all_the_tuples_no_last_special_case;
 use std::fmt;
-use std::future::Future;
 use std::marker::PhantomData;
 
 /// Layer to extract [`Forwarded`] information from the specified `T` headers.
@@ -63,7 +62,7 @@ use std::marker::PhantomData;
 /// #[tokio::main]
 /// async fn main() {
 ///     let service = GetForwardedHeadersLayer::x_forwarded_for()
-///         .layer(service_fn(|ctx: Context<()>, _| async move {
+///         .into_layer(service_fn(async |ctx: Context<()>, _| {
 ///             let forwarded = ctx.get::<Forwarded>().unwrap();
 ///             assert_eq!(forwarded.client_ip(), Some(IpAddr::from([12, 23, 34, 45])));
 ///             assert!(forwarded.client_proto().is_none());
@@ -349,10 +348,10 @@ all_the_tuples_no_last_special_case!(get_forwarded_service_for_tuple);
 mod tests {
     use super::*;
     use crate::{
-        headers::{ClientIp, TrueClientIp, XClientIp, XRealIp},
         IntoResponse, Response, StatusCode,
+        headers::{ClientIp, TrueClientIp, XClientIp, XRealIp},
     };
-    use rama_core::{error::OpaqueError, service::service_fn, Layer};
+    use rama_core::{Layer, error::OpaqueError, service::service_fn};
     use rama_net::forwarded::{ForwardedProtocol, ForwardedVersion};
     use std::{convert::Infallible, net::IpAddr};
 
@@ -391,22 +390,22 @@ mod tests {
             )),
         );
         assert_is_service(
-            GetForwardedHeadersLayer::forwarded().layer(service_fn(dummy_service_fn)),
+            GetForwardedHeadersLayer::forwarded().into_layer(service_fn(dummy_service_fn)),
         );
-        assert_is_service(GetForwardedHeadersLayer::via().layer(service_fn(dummy_service_fn)));
+        assert_is_service(GetForwardedHeadersLayer::via().into_layer(service_fn(dummy_service_fn)));
         assert_is_service(
-            GetForwardedHeadersLayer::<XRealIp>::new().layer(service_fn(dummy_service_fn)),
+            GetForwardedHeadersLayer::<XRealIp>::new().into_layer(service_fn(dummy_service_fn)),
         );
         assert_is_service(
             GetForwardedHeadersLayer::<(ClientIp, TrueClientIp)>::new()
-                .layer(service_fn(dummy_service_fn)),
+                .into_layer(service_fn(dummy_service_fn)),
         );
     }
 
     #[tokio::test]
     async fn test_get_forwarded_header_forwarded() {
-        let service = GetForwardedHeadersLayer::forwarded().layer(service_fn(
-            |ctx: Context<()>, _| async move {
+        let service = GetForwardedHeadersLayer::forwarded().into_layer(service_fn(
+            async |ctx: Context<()>, _| {
                 let forwarded = ctx.get::<Forwarded>().unwrap();
                 assert_eq!(forwarded.client_ip(), Some(IpAddr::from([12, 23, 34, 45])));
                 assert_eq!(forwarded.client_proto(), Some(ForwardedProtocol::HTTP));
@@ -425,7 +424,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_forwarded_header_via() {
         let service =
-            GetForwardedHeadersLayer::via().layer(service_fn(|ctx: Context<()>, _| async move {
+            GetForwardedHeadersLayer::via().into_layer(service_fn(async |ctx: Context<()>, _| {
                 let forwarded = ctx.get::<Forwarded>().unwrap();
                 assert!(forwarded.client_ip().is_none());
                 assert_eq!(
@@ -447,8 +446,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_forwarded_header_x_forwarded_for() {
-        let service = GetForwardedHeadersLayer::x_forwarded_for().layer(service_fn(
-            |ctx: Context<()>, _| async move {
+        let service = GetForwardedHeadersLayer::x_forwarded_for().into_layer(service_fn(
+            async |ctx: Context<()>, _| {
                 let forwarded = ctx.get::<Forwarded>().unwrap();
                 assert_eq!(forwarded.client_ip(), Some(IpAddr::from([12, 23, 34, 45])));
                 assert!(forwarded.client_proto().is_none());

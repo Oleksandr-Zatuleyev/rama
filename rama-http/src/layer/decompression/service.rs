@@ -1,16 +1,14 @@
 use std::fmt;
 
-use super::{body::BodyInner, DecompressionBody};
+use super::{DecompressionBody, body::BodyInner};
 use crate::dep::http_body::Body;
-use crate::layer::util::{
-    compression::{AcceptEncoding, CompressionLevel, WrapBody},
-    content_encoding::SupportedEncodings,
-};
+use crate::layer::util::compression::{CompressionLevel, WrapBody};
 use crate::{
-    header::{self, ACCEPT_ENCODING},
     Request, Response,
+    header::{self, ACCEPT_ENCODING},
 };
 use rama_core::{Context, Service};
+use rama_http_types::headers::encoding::{AcceptEncoding, SupportedEncodings};
 use rama_utils::macros::define_inner_service_accessors;
 
 /// Decompresses response bodies of the underlying service.
@@ -118,7 +116,7 @@ where
         mut req: Request<ReqBody>,
     ) -> Result<Self::Response, Self::Error> {
         if let header::Entry::Vacant(entry) = req.headers_mut().entry(ACCEPT_ENCODING) {
-            if let Some(accept) = self.accept.to_header_value() {
+            if let Some(accept) = self.accept.maybe_to_header_value() {
                 entry.insert(accept);
             }
         }
@@ -150,7 +148,7 @@ where
                         return Ok(Response::from_parts(
                             parts,
                             DecompressionBody::new(BodyInner::identity(body)),
-                        ))
+                        ));
                     }
                 };
 

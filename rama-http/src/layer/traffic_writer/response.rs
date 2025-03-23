@@ -9,9 +9,8 @@ use rama_core::rt::Executor;
 use rama_core::{Context, Layer, Service};
 use rama_utils::macros::define_inner_service_accessors;
 use std::fmt::Debug;
-use std::future::Future;
-use tokio::io::{stderr, stdout, AsyncWrite};
-use tokio::sync::mpsc::{channel, unbounded_channel, Sender, UnboundedSender};
+use tokio::io::{AsyncWrite, stderr, stdout};
+use tokio::sync::mpsc::{Sender, UnboundedSender, channel, unbounded_channel};
 
 /// Layer that applies [`ResponseWriterService`] which prints the http response in std format.
 pub struct ResponseWriterLayer<W> {
@@ -151,6 +150,13 @@ impl<S, W: Clone> Layer<S> for ResponseWriterLayer<W> {
             writer: self.writer.clone(),
         }
     }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        ResponseWriterService {
+            inner,
+            writer: self.writer,
+        }
+    }
 }
 
 /// Middleware to print Http request in std format.
@@ -201,7 +207,7 @@ impl<S> ResponseWriterService<S, UnboundedSender<Response>> {
         W: AsyncWrite + Unpin + Send + Sync + 'static,
     {
         let layer = ResponseWriterLayer::writer_unbounded(executor, writer, mode);
-        layer.layer(inner)
+        layer.into_layer(inner)
     }
 
     /// Create a new [`ResponseWriterService`] that prints responses to stdout
@@ -231,7 +237,7 @@ impl<S> ResponseWriterService<S, Sender<Response>> {
         W: AsyncWrite + Unpin + Send + Sync + 'static,
     {
         let layer = ResponseWriterLayer::writer(executor, writer, buffer_size, mode);
-        layer.layer(inner)
+        layer.into_layer(inner)
     }
 
     /// Create a new [`ResponseWriterService`] that prints responses to stdout
@@ -287,7 +293,7 @@ where
                     .map_err(|err| OpaqueError::from_boxed(err.into()))
                     .context("printer prepare: collect response body")?
                     .to_bytes();
-                let resp: http::Response<Body> =
+                let resp: rama_http_types::Response<Body> =
                     Response::from_parts(parts.clone(), Body::from(body_bytes.clone()));
                 self.writer.write_response(resp).await;
                 Response::from_parts(parts, Body::from(body_bytes))

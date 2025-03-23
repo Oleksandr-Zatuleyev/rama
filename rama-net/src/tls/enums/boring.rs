@@ -8,26 +8,26 @@ macro_rules! try_from_mapping {
             let $rama_val:ident = $boring_val:ident;
         )+
     ) => {
-        impl TryFrom<super::$rama_ty> for boring::ssl::$boring_ty {
+        impl TryFrom<super::$rama_ty> for rama_boring::ssl::$boring_ty {
             type Error = super::$rama_ty;
 
             fn try_from(value: super::$rama_ty) -> Result<Self, Self::Error> {
                 match value {
                     $(
-                        super::$rama_ty::$rama_val => Ok(boring::ssl::$boring_ty::$boring_val),
+                        super::$rama_ty::$rama_val => Ok(rama_boring::ssl::$boring_ty::$boring_val),
                     )+
                     _ => Err(value),
                 }
             }
         }
 
-        impl TryFrom<boring::ssl::$boring_ty> for super::$rama_ty {
-                type Error = boring::ssl::$boring_ty;
+        impl TryFrom<rama_boring::ssl::$boring_ty> for super::$rama_ty {
+                type Error = rama_boring::ssl::$boring_ty;
 
-                fn try_from(value: boring::ssl::$boring_ty) -> Result<Self, Self::Error> {
+                fn try_from(value: rama_boring::ssl::$boring_ty) -> Result<Self, Self::Error> {
                     match value {
                         $(
-                            boring::ssl::$boring_ty::$boring_val => Ok(super::$rama_ty::$rama_val),
+                            rama_boring::ssl::$boring_ty::$boring_val => Ok(super::$rama_ty::$rama_val),
                         )+
                         _ => Err(value),
                     }
@@ -79,7 +79,15 @@ try_from_mapping! {
 pub fn openssl_cipher_list_str_from_cipher_list(suites: &[super::CipherSuite]) -> Option<String> {
     let s = suites
         .iter()
-        .filter_map(|s| openssl_cipher_str_from_cipher_suite(*s))
+        .filter_map(|s| {
+            if s.is_grease() {
+                trace!("ignore grease cipher suite {s}");
+                return None;
+            }
+
+            openssl_cipher_str_from_cipher_suite(*s)
+        })
+        .dedup()
         .join(":");
     (!s.is_empty()).then_some(s)
 }

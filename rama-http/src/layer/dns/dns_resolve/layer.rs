@@ -23,19 +23,23 @@ impl<S> Layer<S> for DnsResolveModeLayer {
     fn layer(&self, inner: S) -> Self::Service {
         DnsResolveModeService::new(inner, self.header_name.clone())
     }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        DnsResolveModeService::new(inner, self.header_name)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{layer::dns::DnsResolveMode, Request};
-    use rama_core::{service::service_fn, Context, Service};
+    use crate::{Request, layer::dns::DnsResolveMode};
+    use rama_core::{Context, Service, service::service_fn};
     use std::convert::Infallible;
 
     #[tokio::test]
     async fn test_dns_resolve_mode_layer() {
-        let svc = DnsResolveModeLayer::new(HeaderName::from_static("x-dns-resolve")).layer(
-            service_fn(|ctx: Context<()>, _req: Request<()>| async move {
+        let svc = DnsResolveModeLayer::new(HeaderName::from_static("x-dns-resolve")).into_layer(
+            service_fn(async |ctx: Context<()>, _req: Request<()>| {
                 assert_eq!(
                     ctx.get::<DnsResolveMode>().unwrap(),
                     &DnsResolveMode::eager()

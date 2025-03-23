@@ -53,7 +53,7 @@ impl ClassifyResponse for StatusInRangeAsFailures {
 
     fn classify_response<B>(
         self,
-        res: &http::Response<B>,
+        res: &rama_http_types::Response<B>,
     ) -> ClassifiedResponse<Self::FailureClass, Self::ClassifyEos> {
         if self.range.contains(&res.status().as_u16()) {
             let class = StatusInRangeFailureClass::StatusCode(res.status());
@@ -100,16 +100,20 @@ mod tests {
         let classifier = StatusInRangeAsFailures::new(400..=599);
 
         assert!(matches!(
-            dbg!(classifier
-                .clone()
-                .classify_response(&response_with_status(200))),
+            dbg!(
+                classifier
+                    .clone()
+                    .classify_response(&response_with_status(200))
+            ),
             ClassifiedResponse::Ready(Ok(())),
         ));
 
         assert!(matches!(
-            dbg!(classifier
-                .clone()
-                .classify_response(&response_with_status(400))),
+            dbg!(
+                classifier
+                    .clone()
+                    .classify_response(&response_with_status(400))
+            ),
             ClassifiedResponse::Ready(Err(StatusInRangeFailureClass::StatusCode(
                 StatusCode::BAD_REQUEST
             ))),

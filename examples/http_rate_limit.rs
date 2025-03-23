@@ -40,12 +40,12 @@ use rama::{
     combinators::Either,
     error::BoxError,
     http::{
-        matcher::HttpMatcher, response::Json, server::HttpServer, HeaderName, HeaderValue,
-        IntoResponse, Request, Response, StatusCode,
+        HeaderName, HeaderValue, IntoResponse, Request, Response, StatusCode, matcher::HttpMatcher,
+        response::Json, server::HttpServer,
     },
     layer::{
-        limit::policy::{ConcurrentPolicy, LimitReached},
         Layer, LimitLayer, MapResultLayer, TraceErrLayer,
+        limit::policy::{ConcurrentPolicy, LimitReached},
     },
     net::stream::matcher::SocketMatcher,
     rt::Executor,
@@ -135,7 +135,7 @@ async fn main() {
                     ),
                 ])),
             )
-                .layer(service_fn(|req: Request| async move {
+                .into_layer(service_fn(async |req: Request| {
                     if req.uri().path().ends_with("/slow") {
                         tokio::time::sleep(Duration::from_secs(10)).await;
                     }

@@ -1,5 +1,5 @@
 use super::TlsConnectorData;
-use crate::rustls::dep::tokio_rustls::{client::TlsStream, TlsConnector as RustlsConnector};
+use crate::rustls::dep::tokio_rustls::{TlsConnector as RustlsConnector, client::TlsStream};
 use crate::types::TlsTunnel;
 use pin_project_lite::pin_project;
 use private::{ConnectorKindAuto, ConnectorKindSecure, ConnectorKindTunnel};
@@ -9,8 +9,8 @@ use rama_core::{Context, Layer, Service};
 use rama_net::address::Host;
 use rama_net::client::{ConnectorService, EstablishedClientConnection};
 use rama_net::stream::Stream;
-use rama_net::tls::client::NegotiatedTlsParameters;
 use rama_net::tls::ApplicationProtocol;
+use rama_net::tls::client::NegotiatedTlsParameters;
 use rama_net::transport::TryRefIntoTransportContext;
 use std::fmt;
 use std::sync::Arc;
@@ -107,6 +107,14 @@ impl<K: Clone, S> Layer<S> for TlsConnectorLayer<K> {
             inner,
             connector_data: self.connector_data.clone(),
             kind: self.kind.clone(),
+        }
+    }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        TlsConnector {
+            inner,
+            connector_data: self.connector_data,
+            kind: self.kind,
         }
     }
 }
@@ -231,12 +239,8 @@ where
         ctx: Context<State>,
         req: Request,
     ) -> Result<Self::Response, Self::Error> {
-        let EstablishedClientConnection {
-            mut ctx,
-            req,
-            conn,
-            addr,
-        } = self.inner.connect(ctx, req).await.map_err(Into::into)?;
+        let EstablishedClientConnection { mut ctx, req, conn } =
+            self.inner.connect(ctx, req).await.map_err(Into::into)?;
         let transport_ctx = ctx
             .get_or_try_insert_with_ctx(|ctx| req.try_ref_into_transport_ctx(ctx))
             .map_err(|err| {
@@ -261,7 +265,6 @@ where
                 conn: AutoTlsStream {
                     inner: AutoTlsStreamData::Plain { inner: conn },
                 },
-                addr,
             });
         }
 
@@ -273,7 +276,8 @@ where
             "TlsConnector(auto): attempt to secure inner connection",
         );
 
-        let connector_data = ctx.get().cloned();
+        let connector_data = ctx.get::<TlsConnectorData>().cloned();
+
         let (stream, negotiated_params) = self.handshake(connector_data, server_host, conn).await?;
 
         tracing::trace!(
@@ -290,7 +294,6 @@ where
             conn: AutoTlsStream {
                 inner: AutoTlsStreamData::Secure { inner: stream },
             },
-            addr,
         })
     }
 }
@@ -311,12 +314,8 @@ where
         ctx: Context<State>,
         req: Request,
     ) -> Result<Self::Response, Self::Error> {
-        let EstablishedClientConnection {
-            mut ctx,
-            req,
-            conn,
-            addr,
-        } = self.inner.connect(ctx, req).await.map_err(Into::into)?;
+        let EstablishedClientConnection { mut ctx, req, conn } =
+            self.inner.connect(ctx, req).await.map_err(Into::into)?;
 
         let transport_ctx = ctx
             .get_or_try_insert_with_ctx(|ctx| req.try_ref_into_transport_ctx(ctx))
@@ -332,16 +331,12 @@ where
 
         let server_host = transport_ctx.authority.host().clone();
 
-        let connector_data = ctx.get().cloned();
+        let connector_data = ctx.get::<TlsConnectorData>().cloned();
+
         let (conn, negotiated_params) = self.handshake(connector_data, server_host, conn).await?;
         ctx.insert(negotiated_params);
 
-        Ok(EstablishedClientConnection {
-            ctx,
-            req,
-            conn,
-            addr,
-        })
+        Ok(EstablishedClientConnection { ctx, req, conn })
     }
 }
 
@@ -359,12 +354,8 @@ where
         ctx: Context<State>,
         req: Request,
     ) -> Result<Self::Response, Self::Error> {
-        let EstablishedClientConnection {
-            mut ctx,
-            req,
-            conn,
-            addr,
-        } = self.inner.connect(ctx, req).await.map_err(Into::into)?;
+        let EstablishedClientConnection { mut ctx, req, conn } =
+            self.inner.connect(ctx, req).await.map_err(Into::into)?;
 
         let server_host = match ctx
             .get::<TlsTunnel>()
@@ -383,12 +374,12 @@ where
                     conn: AutoTlsStream {
                         inner: AutoTlsStreamData::Plain { inner: conn },
                     },
-                    addr,
                 });
             }
         };
 
-        let connector_data = ctx.get().cloned();
+        let connector_data = ctx.get::<TlsConnectorData>().cloned();
+
         let (conn, negotiated_params) = self.handshake(connector_data, server_host, conn).await?;
         ctx.insert(negotiated_params);
 
@@ -399,7 +390,6 @@ where
             conn: AutoTlsStream {
                 inner: AutoTlsStreamData::Secure { inner: conn },
             },
-            addr,
         })
     }
 }

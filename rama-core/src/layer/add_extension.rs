@@ -41,7 +41,7 @@
 //! let mut service = (
 //!     // Share an `Arc<State>` with all requests.
 //!     AddExtensionLayer::new(Arc::new(state)),
-//! ).layer(service_fn(handle));
+//! ).into_layer(service_fn(handle));
 //!
 //! // Call the service.
 //! let response = service
@@ -100,6 +100,13 @@ where
             value: self.value.clone(),
         }
     }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        AddExtension {
+            inner,
+            value: self.value,
+        }
+    }
 }
 
 /// Middleware for adding some shareable value to incoming [Context].
@@ -155,7 +162,7 @@ where
         &self,
         mut ctx: Context<State>,
         req: Request,
-    ) -> impl std::future::Future<Output = Result<Self::Response, Self::Error>> + Send + '_ {
+    ) -> impl Future<Output = Result<Self::Response, Self::Error>> + Send + '_ {
         ctx.insert(self.value.clone());
         self.inner.serve(ctx, req)
     }
@@ -164,7 +171,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{service::service_fn, Context};
+    use crate::{Context, service::service_fn};
     use std::{convert::Infallible, sync::Arc};
 
     struct State(i32);
@@ -173,8 +180,8 @@ mod tests {
     async fn basic() {
         let state = Arc::new(State(1));
 
-        let svc = AddExtensionLayer::new(state).layer(service_fn(
-            |ctx: Context<()>, _req: ()| async move {
+        let svc = AddExtensionLayer::new(state).into_layer(service_fn(
+            async |ctx: Context<()>, _req: ()| {
                 let state = ctx.get::<Arc<State>>().unwrap();
                 Ok::<_, Infallible>(state.0)
             },

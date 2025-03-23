@@ -1,7 +1,7 @@
+use crate::Request;
 use crate::dep::http_body_util::BodyExt;
 use crate::service::web::extract::FromRequest;
 use crate::utils::macros::define_http_rejection;
-use crate::Request;
 use rama_utils::macros::impl_deref;
 
 /// Extractor to get the response body, collected as [`Bytes`].
@@ -40,7 +40,7 @@ mod test {
 
     #[tokio::test]
     async fn test_bytes() {
-        let service = WebService::default().get("/", |Bytes(body): Bytes| async move {
+        let service = WebService::default().get("/", async |Bytes(body): Bytes| {
             assert_eq!(body, "test");
         });
 

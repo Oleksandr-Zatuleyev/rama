@@ -34,14 +34,14 @@ pub struct TraceLayer<
 }
 
 impl<
-        M: fmt::Debug,
-        MakeSpan: fmt::Debug,
-        OnRequest: fmt::Debug,
-        OnResponse: fmt::Debug,
-        OnBodyChunk: fmt::Debug,
-        OnEos: fmt::Debug,
-        OnFailure: fmt::Debug,
-    > fmt::Debug for TraceLayer<M, MakeSpan, OnRequest, OnResponse, OnBodyChunk, OnEos, OnFailure>
+    M: fmt::Debug,
+    MakeSpan: fmt::Debug,
+    OnRequest: fmt::Debug,
+    OnResponse: fmt::Debug,
+    OnBodyChunk: fmt::Debug,
+    OnEos: fmt::Debug,
+    OnFailure: fmt::Debug,
+> fmt::Debug for TraceLayer<M, MakeSpan, OnRequest, OnResponse, OnBodyChunk, OnEos, OnFailure>
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("TraceLayer")
@@ -57,14 +57,14 @@ impl<
 }
 
 impl<
-        M: Clone,
-        MakeSpan: Clone,
-        OnRequest: Clone,
-        OnResponse: Clone,
-        OnBodyChunk: Clone,
-        OnEos: Clone,
-        OnFailure: Clone,
-    > Clone for TraceLayer<M, MakeSpan, OnRequest, OnResponse, OnBodyChunk, OnEos, OnFailure>
+    M: Clone,
+    MakeSpan: Clone,
+    OnRequest: Clone,
+    OnResponse: Clone,
+    OnBodyChunk: Clone,
+    OnEos: Clone,
+    OnFailure: Clone,
+> Clone for TraceLayer<M, MakeSpan, OnRequest, OnResponse, OnBodyChunk, OnEos, OnFailure>
 {
     fn clone(&self) -> Self {
         Self {
@@ -277,6 +277,19 @@ where
             on_body_chunk: self.on_body_chunk.clone(),
             on_response: self.on_response.clone(),
             on_failure: self.on_failure.clone(),
+        }
+    }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        Trace {
+            inner,
+            make_classifier: self.make_classifier,
+            make_span: self.make_span,
+            on_request: self.on_request,
+            on_eos: self.on_eos,
+            on_body_chunk: self.on_body_chunk,
+            on_response: self.on_response,
+            on_failure: self.on_failure,
         }
     }
 }

@@ -6,21 +6,24 @@
 use super::{ClientHello, ClientHelloExtension};
 use crate::address::Host;
 use crate::tls::{
-    enums::CompressionAlgorithm, ApplicationProtocol, CipherSuite, ExtensionId, ProtocolVersion,
+    ApplicationProtocol, CipherSuite, ExtensionId, ProtocolVersion, enums::CompressionAlgorithm,
 };
 use nom::{
+    IResult, Parser,
     bytes::streaming::take,
     combinator::{complete, cond, map, map_parser, opt, verify},
-    error::{make_error, ErrorKind},
+    error::{ErrorKind, make_error},
     multi::{length_data, many0},
-    number::streaming::{be_u16, be_u8},
-    IResult,
+    number::streaming::{be_u8, be_u16},
 };
 use rama_core::error::OpaqueError;
 use std::str;
 
-#[inline]
-pub(crate) fn parse_client_hello(i: &[u8]) -> Result<ClientHello, OpaqueError> {
+/// Parse a [`ClientHello`] from the raw "wire" bytes.
+///
+/// This function is not infallible, it can return an error if the input is not a valid
+/// TLS ClientHello message or if there is unexpected trailing data.
+pub fn parse_client_hello(i: &[u8]) -> Result<ClientHello, OpaqueError> {
     match parse_client_hello_inner(i) {
         Err(err) => Err(OpaqueError::from_display(format!(
             "parse client hello handshake message: {err:?}"
@@ -40,13 +43,13 @@ pub(crate) fn parse_client_hello(i: &[u8]) -> Result<ClientHello, OpaqueError> {
 fn parse_client_hello_inner(i: &[u8]) -> IResult<&[u8], ClientHello> {
     let (i, version) = be_u16(i)?;
     let (i, _random) = take(32usize)(i)?;
-    let (i, sidlen) = verify(be_u8, |&n| n <= 32)(i)?;
-    let (i, _sid) = cond(sidlen > 0, take(sidlen as usize))(i)?;
+    let (i, sidlen) = verify(be_u8, |&n| n <= 32).parse(i)?;
+    let (i, _sid) = cond(sidlen > 0, take(sidlen as usize)).parse(i)?;
     let (i, ciphers_len) = be_u16(i)?;
     let (i, cipher_suites) = parse_cipher_suites(i, ciphers_len as usize)?;
     let (i, comp_len) = be_u8(i)?;
     let (i, compression_algorithms) = parse_compressions_algs(i, comp_len as usize)?;
-    let (i, opt_ext) = opt(complete(length_data(be_u16)))(i)?;
+    let (i, opt_ext) = opt(complete(length_data(be_u16))).parse(i)?;
 
     let mut extensions = vec![];
     if let Some(mut i) = opt_ext {
@@ -77,7 +80,7 @@ fn parse_cipher_suites(i: &[u8], len: usize) -> IResult<&[u8], Vec<CipherSuite>>
     }
     let v = (i[..len])
         .chunks(2)
-        .map(|chunk| CipherSuite::from((chunk[0] as u16) << 8 | chunk[1] as u16))
+        .map(|chunk| CipherSuite::from(((chunk[0] as u16) << 8) | chunk[1] as u16))
         .collect();
     Ok((&i[len..], v))
 }
@@ -99,7 +102,7 @@ fn parse_compressions_algs(i: &[u8], len: usize) -> IResult<&[u8], Vec<Compressi
 fn parse_tls_client_hello_extension(i: &[u8]) -> IResult<&[u8], ClientHelloExtension> {
     let (i, ext_type) = be_u16(i)?;
     let id = ExtensionId::from(ext_type);
-    let (i, ext_data) = length_data(be_u16)(i)?;
+    let (i, ext_data) = length_data(be_u16).parse(i)?;
 
     let ext_len = ext_data.len() as u16;
 
@@ -115,6 +118,13 @@ fn parse_tls_client_hello_extension(i: &[u8]) -> IResult<&[u8], ClientHelloExten
         }
         ExtensionId::SUPPORTED_VERSIONS => {
             parse_tls_extension_supported_versions_content(ext_data, ext_len)
+        }
+        ExtensionId::COMPRESS_CERTIFICATE => {
+            parse_tls_extension_certificate_compression_content(ext_data)
+        }
+        ExtensionId::RECORD_SIZE_LIMIT => {
+            let (i, v) = be_u16(ext_data)?;
+            Ok((i, ClientHelloExtension::RecordSizeLimit(v)))
         }
         _ => Ok((
             i,
@@ -139,7 +149,8 @@ fn parse_tls_extension_sni_content(i: &[u8]) -> IResult<&[u8], ClientHelloExtens
     let (i, mut v) = map_parser(
         take(list_len),
         many0(complete(parse_tls_extension_sni_hostname)),
-    )(i)?;
+    )
+    .parse(i)?;
     if v.len() > 1 {
         return Err(nom::Err::Error(nom::error::Error::new(
             i,
@@ -166,7 +177,7 @@ fn parse_tls_extension_sni_hostname(i: &[u8]) -> IResult<&[u8], Host> {
     if nt != 0 {
         return Err(nom::Err::Error(nom::error::Error::new(i, ErrorKind::IsNot)));
     }
-    let (i, v) = length_data(be_u16)(i)?;
+    let (i, v) = length_data(be_u16).parse(i)?;
     let host = str::from_utf8(v)
         .map_err(|_| nom::Err::Error(nom::error::Error::new(i, ErrorKind::Not)))?
         .parse()
@@ -179,14 +190,16 @@ fn parse_tls_extension_elliptic_curves_content(i: &[u8]) -> IResult<&[u8], Clien
     map_parser(
         length_data(be_u16),
         map(parse_u16_type, ClientHelloExtension::SupportedGroups),
-    )(i)
+    )
+    .parse(i)
 }
 
 fn parse_tls_extension_ec_point_formats_content(i: &[u8]) -> IResult<&[u8], ClientHelloExtension> {
     map_parser(
         length_data(be_u8),
         map(parse_u8_type, ClientHelloExtension::ECPointFormats),
-    )(i)
+    )
+    .parse(i)
 }
 
 // TLS 1.3 draft 23
@@ -208,13 +221,14 @@ fn parse_tls_extension_supported_versions_content(
     if ext_len == 2 {
         map(be_u16, |x| {
             ClientHelloExtension::SupportedVersions(vec![ProtocolVersion::from(x)])
-        })(i)
+        })
+        .parse(i)
     } else {
         let (i, _) = be_u8(i)?;
         if ext_len == 0 {
             return Err(nom::Err::Error(make_error(i, ErrorKind::Verify)));
         }
-        let (i, l) = map_parser(take(ext_len - 1), parse_u16_type)(i)?;
+        let (i, l) = map_parser(take(ext_len - 1), parse_u16_type).parse(i)?;
         Ok((i, ClientHelloExtension::SupportedVersions(l)))
     }
 }
@@ -226,7 +240,8 @@ fn parse_tls_extension_signature_algorithms_content(
     map_parser(
         length_data(be_u16),
         map(parse_u16_type, ClientHelloExtension::SignatureAlgorithms),
-    )(i)
+    )
+    .parse(i)
 }
 
 /// Defined in [RFC7301]
@@ -237,13 +252,24 @@ fn parse_tls_extension_alpn_content(i: &[u8]) -> IResult<&[u8], ClientHelloExten
             parse_protocol_name_list,
             ClientHelloExtension::ApplicationLayerProtocolNegotiation,
         ),
-    )(i)
+    )
+    .parse(i)
+}
+
+fn parse_tls_extension_certificate_compression_content(
+    i: &[u8],
+) -> IResult<&[u8], ClientHelloExtension> {
+    map_parser(
+        length_data(be_u8),
+        map(parse_u16_type, ClientHelloExtension::CertificateCompression),
+    )
+    .parse(i)
 }
 
 fn parse_protocol_name_list(mut i: &[u8]) -> IResult<&[u8], Vec<ApplicationProtocol>> {
     let mut v = vec![];
     while !i.is_empty() {
-        let (n, alpn) = map_parser(length_data(be_u8), parse_protocol_name)(i)?;
+        let (n, alpn) = map_parser(length_data(be_u8), parse_protocol_name).parse(i)?;
         v.push(alpn);
         i = n;
     }
@@ -270,7 +296,7 @@ fn parse_u16_type<T: From<u16>>(i: &[u8]) -> IResult<&[u8], Vec<T>> {
     }
     let v = (i[..len])
         .chunks(2)
-        .map(|chunk| T::from((chunk[0] as u16) << 8 | chunk[1] as u16))
+        .map(|chunk| T::from(((chunk[0] as u16) << 8) | chunk[1] as u16))
         .collect();
     Ok((&i[len..], v))
 }
@@ -281,7 +307,10 @@ mod tests {
 
     use super::*;
     use crate::address::Domain;
-    use crate::tls::{ECPointFormat, ExtensionId, SignatureScheme, SupportedGroup};
+    use crate::tls::{
+        CertificateCompressionAlgorithm, ECPointFormat, ExtensionId, SignatureScheme,
+        SupportedGroup,
+    };
 
     #[test]
     fn test_parse_tls_extension_sni_hostname() {
@@ -481,10 +510,9 @@ mod tests {
                 ProtocolVersion::TLSv1_0,
             ],
         );
-        assert_eq_opaque_extension(
+        assert_eq_supported_certificate_compression_extension(
             &client_hello.extensions()[13],
-            ExtensionId::COMPRESS_CERTIFICATE,
-            &[0x02, 0x00, 0x01],
+            &[CertificateCompressionAlgorithm::Zlib],
         );
         assert_eq_opaque_extension(
             &client_hello.extensions()[14],
@@ -603,6 +631,20 @@ mod tests {
         match ext {
             ClientHelloExtension::SupportedVersions(version_list) => {
                 assert_eq!(version_list, expected_version_list);
+            }
+            other => {
+                panic!("unexpected extension: {other:?}");
+            }
+        }
+    }
+
+    fn assert_eq_supported_certificate_compression_extension(
+        ext: &ClientHelloExtension,
+        expected_certificate_compression: &[CertificateCompressionAlgorithm],
+    ) {
+        match ext {
+            ClientHelloExtension::CertificateCompression(algorithms) => {
+                assert_eq!(algorithms, expected_certificate_compression);
             }
             other => {
                 panic!("unexpected extension: {other:?}");

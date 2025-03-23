@@ -3,17 +3,16 @@
 //! [`Layer`]: rama_core::Layer
 
 use crate::{
-    headers::{HeaderMapExt, UserAgent},
     IntoResponse, Request, Response,
+    headers::{HeaderMapExt, UserAgent},
 };
 use rama_core::telemetry::opentelemetry::{
-    global,
+    AttributesFactory, InstrumentationScope, KeyValue, MeterOptions, ServiceInfo, global,
     metrics::{Counter, Histogram, Meter},
     semantic_conventions::{
         self,
         resource::{SERVICE_NAME, SERVICE_VERSION},
     },
-    AttributesFactory, InstrumentationScope, KeyValue, MeterOptions, ServiceInfo,
 };
 use rama_core::{Context, Layer, Service};
 use rama_net::http::RequestContext;
@@ -191,6 +190,15 @@ impl<S, F: Clone> Layer<S> for RequestMetricsLayer<F> {
             attributes_factory: self.attributes_factory.clone(),
         }
     }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        RequestMetricsService {
+            inner,
+            metrics: self.metrics,
+            base_attributes: self.base_attributes,
+            attributes_factory: self.attributes_factory,
+        }
+    }
 }
 
 /// A [`Service`] that records [http] server metrics using OpenTelemetry.
@@ -204,7 +212,7 @@ pub struct RequestMetricsService<S, F = ()> {
 impl<S> RequestMetricsService<S, ()> {
     /// Create a new [`RequestMetricsService`].
     pub fn new(inner: S) -> Self {
-        RequestMetricsLayer::new().layer(inner)
+        RequestMetricsLayer::new().into_layer(inner)
     }
 
     define_inner_service_accessors!();
@@ -268,11 +276,11 @@ impl<S, F> RequestMetricsService<S, F> {
 
         attributes.push(KeyValue::new(HTTP_REQUEST_METHOD, req.method().to_string()));
         if let Some(http_version) = request_ctx.as_ref().and_then(|rc| match rc.http_version {
-            http::Version::HTTP_09 => Some("0.9"),
-            http::Version::HTTP_10 => Some("1.0"),
-            http::Version::HTTP_11 => Some("1.1"),
-            http::Version::HTTP_2 => Some("2"),
-            http::Version::HTTP_3 => Some("3"),
+            rama_http_types::Version::HTTP_09 => Some("0.9"),
+            rama_http_types::Version::HTTP_10 => Some("1.0"),
+            rama_http_types::Version::HTTP_11 => Some("1.1"),
+            rama_http_types::Version::HTTP_2 => Some("2"),
+            rama_http_types::Version::HTTP_3 => Some("3"),
             _ => None,
         }) {
             attributes.push(KeyValue::new(NETWORK_PROTOCOL_VERSION, http_version));
@@ -350,15 +358,21 @@ mod tests {
             .unwrap();
 
         let attributes = svc.compute_attributes(&mut ctx, &req);
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == SERVICE_NAME));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == SERVICE_VERSION));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == HTTP_REQUEST_HOST));
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == SERVICE_NAME)
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == SERVICE_VERSION)
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == HTTP_REQUEST_HOST)
+        );
     }
 
     #[test]
@@ -371,7 +385,7 @@ mod tests {
             metric_prefix: Some("foo".to_owned()),
             ..Default::default()
         })
-        .layer(());
+        .into_layer(());
         let mut ctx = Context::default();
         let req = Request::builder()
             .uri("http://www.example.com")
@@ -379,15 +393,21 @@ mod tests {
             .unwrap();
 
         let attributes = svc.compute_attributes(&mut ctx, &req);
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == SERVICE_NAME && attr.value.as_str() == "test"));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == SERVICE_VERSION && attr.value.as_str() == "42"));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == HTTP_REQUEST_HOST));
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == SERVICE_NAME && attr.value.as_str() == "test")
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == SERVICE_VERSION && attr.value.as_str() == "42")
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == HTTP_REQUEST_HOST)
+        );
     }
 
     #[test]
@@ -401,7 +421,7 @@ mod tests {
             ..Default::default()
         })
         .with_attributes(vec![KeyValue::new("test", "attribute_fn")])
-        .layer(());
+        .into_layer(());
         let mut ctx = Context::default();
         let req = Request::builder()
             .uri("http://www.example.com")
@@ -409,18 +429,26 @@ mod tests {
             .unwrap();
 
         let attributes = svc.compute_attributes(&mut ctx, &req);
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == SERVICE_NAME && attr.value.as_str() == "test"));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == SERVICE_VERSION && attr.value.as_str() == "42"));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == HTTP_REQUEST_HOST));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == "test" && attr.value.as_str() == "attribute_fn"));
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == SERVICE_NAME && attr.value.as_str() == "test")
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == SERVICE_VERSION && attr.value.as_str() == "42")
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == HTTP_REQUEST_HOST)
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == "test" && attr.value.as_str() == "attribute_fn")
+        );
     }
 
     #[test]
@@ -438,7 +466,7 @@ mod tests {
             attributes.push(KeyValue::new("test", "attribute_fn"));
             attributes
         })
-        .layer(());
+        .into_layer(());
         let mut ctx = Context::default();
         let req = Request::builder()
             .uri("http://www.example.com")
@@ -446,17 +474,25 @@ mod tests {
             .unwrap();
 
         let attributes = svc.compute_attributes(&mut ctx, &req);
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == SERVICE_NAME && attr.value.as_str() == "test"));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == SERVICE_VERSION && attr.value.as_str() == "42"));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == HTTP_REQUEST_HOST));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == "test" && attr.value.as_str() == "attribute_fn"));
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == SERVICE_NAME && attr.value.as_str() == "test")
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == SERVICE_VERSION && attr.value.as_str() == "42")
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == HTTP_REQUEST_HOST)
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == "test" && attr.value.as_str() == "attribute_fn")
+        );
     }
 }

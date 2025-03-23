@@ -1,11 +1,12 @@
-use super::State;
+use super::{State, StorageAuthorized};
 use rama::{
-    error::{BoxError, ErrorContext},
+    Context,
+    error::{BoxError, ErrorContext, OpaqueError},
     http::{
-        dep::http::{request::Parts, Extensions},
+        self, HeaderMap, HeaderName, Request,
+        dep::http::{Extensions, request::Parts},
         headers::Forwarded,
         proto::{h1::Http1HeaderMap, h2::PseudoHeaderOrder},
-        HeaderMap, Request,
     },
     net::{
         fingerprint::{Ja3, Ja4, Ja4H},
@@ -13,11 +14,13 @@ use rama::{
         stream::SocketInfo,
     },
     tls::types::{
-        client::{ClientHello, ClientHelloExtension},
         SecureTransport,
+        client::{ClientHello, ClientHelloExtension},
     },
-    ua::UserAgent,
-    Context,
+    ua::{
+        UserAgent,
+        profile::{Http1Settings, Http2Settings},
+    },
 };
 use serde::Serialize;
 use std::{str::FromStr, sync::Arc};
@@ -210,8 +213,118 @@ pub(super) struct HttpInfo {
     pub(super) pseudo_headers: Option<Vec<String>>,
 }
 
-pub(super) fn get_http_info(headers: HeaderMap, ext: &mut Extensions) -> HttpInfo {
-    let headers: Vec<_> = Http1HeaderMap::new(headers, Some(ext))
+pub(super) async fn get_and_store_http_info(
+    ctx: &Context<Arc<State>>,
+    headers: HeaderMap,
+    ext: &mut Extensions,
+    http_version: http::Version,
+    ua: String,
+    initiator: Initiator,
+) -> Result<HttpInfo, OpaqueError> {
+    let original_headers = Http1HeaderMap::new(headers, Some(ext));
+    let pseudo_headers = ext.get::<PseudoHeaderOrder>();
+
+    if ctx.contains::<StorageAuthorized>() {
+        if let Some(storage) = ctx.state().storage.as_ref() {
+            match http_version {
+                http::Version::HTTP_09 | http::Version::HTTP_10 | http::Version::HTTP_11 => {
+                    match initiator {
+                        Initiator::Navigator => {
+                            storage
+                                .store_h1_headers_navigate(ua, original_headers.clone())
+                                .await
+                                .context("store h1 headers navigate")?;
+                        }
+                        Initiator::Fetch => {
+                            storage
+                                .store_h1_headers_fetch(ua, original_headers.clone())
+                                .await
+                                .context("store h1 headers fetch")?;
+                        }
+                        Initiator::XMLHttpRequest => {
+                            if let Some(header_name) = original_headers.get_original_name(
+                                &HeaderName::from_static("x-rama-custom-header-marker"),
+                            ) {
+                                // Check if the header name is title-cased or not
+                                let header_str = header_name.as_str();
+                                let title_case_headers = header_str.split('-').all(|part| {
+                                    part.chars().next().is_none_or(|c| c.is_ascii_uppercase())
+                                        && part.chars().skip(1).all(|c| c.is_ascii_lowercase())
+                                });
+
+                                tracing::debug!(
+                                    "Custom header marker found: {}, title-cased: {}",
+                                    header_str,
+                                    title_case_headers
+                                );
+
+                                storage
+                                    .store_h1_settings(
+                                        ua.clone(),
+                                        Http1Settings { title_case_headers },
+                                    )
+                                    .await
+                                    .context("store h1 settings")?;
+                            }
+
+                            storage
+                                .store_h1_headers_xhr(ua, original_headers.clone())
+                                .await
+                                .context("store h1 headers xhr")?;
+                        }
+                        Initiator::Form => {
+                            storage
+                                .store_h1_headers_form(ua, original_headers.clone())
+                                .await
+                                .context("store h1 headers form")?;
+                        }
+                    }
+                }
+                http::Version::HTTP_2 => {
+                    if let Some(pseudo_headers) = pseudo_headers {
+                        storage
+                            .store_h2_settings(
+                                ua.clone(),
+                                Http2Settings {
+                                    http_pseudo_headers: Some(pseudo_headers.iter().collect()),
+                                },
+                            )
+                            .await
+                            .context("store h2 pseudo headers")?;
+                    }
+                    match initiator {
+                        Initiator::Navigator => {
+                            storage
+                                .store_h2_headers_navigate(ua, original_headers.clone())
+                                .await
+                                .context("store h2 headers navigate")?;
+                        }
+                        Initiator::Fetch => {
+                            storage
+                                .store_h2_headers_fetch(ua, original_headers.clone())
+                                .await
+                                .context("store h2 headers fetch")?;
+                        }
+                        Initiator::XMLHttpRequest => {
+                            storage
+                                .store_h2_headers_xhr(ua, original_headers.clone())
+                                .await
+                                .context("store h2 headers xhr")?;
+                        }
+                        Initiator::Form => {
+                            storage
+                                .store_h2_headers_form(ua, original_headers.clone())
+                                .await
+                                .context("store h2 headers form")?;
+                        }
+                    }
+                }
+                _ => (),
+            }
+        }
+    }
+
+    let headers: Vec<_> = original_headers
         .into_iter()
         .map(|(name, value)| {
             (
@@ -223,14 +336,13 @@ pub(super) fn get_http_info(headers: HeaderMap, ext: &mut Extensions) -> HttpInf
         })
         .collect();
 
-    let pseudo_headers: Option<Vec<_>> = ext
-        .get::<PseudoHeaderOrder>()
-        .map(|o| o.iter().map(|p| p.to_string()).collect());
+    let pseudo_headers: Option<Vec<_>> =
+        pseudo_headers.map(|o| o.iter().map(|p| p.to_string()).collect());
 
-    HttpInfo {
+    Ok(HttpInfo {
         headers,
         pseudo_headers,
-    }
+    })
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -258,7 +370,7 @@ pub(super) struct Ja3DisplayInfo {
 #[derive(Debug, Clone, Serialize)]
 pub(super) struct TlsDisplayInfoExtension {
     pub(super) id: String,
-    pub(super) data: TlsDisplayInfoExtensionData,
+    pub(super) data: Option<TlsDisplayInfoExtensionData>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -267,20 +379,31 @@ pub(super) enum TlsDisplayInfoExtensionData {
     Multi(Vec<String>),
 }
 
-pub(super) fn get_tls_display_info(ctx: &Context<Arc<State>>) -> Option<TlsDisplayInfo> {
-    let hello: &ClientHello = ctx
+pub(super) async fn get_tls_display_info_and_store(
+    ctx: &Context<Arc<State>>,
+    ua: String,
+) -> Result<Option<TlsDisplayInfo>, OpaqueError> {
+    let hello: &ClientHello = match ctx
         .get::<SecureTransport>()
-        .and_then(|st| st.client_hello())?;
+        .and_then(|st| st.client_hello())
+    {
+        Some(hello) => hello,
+        None => return Ok(None),
+    };
 
-    let ja4 = Ja4::compute(ctx.extensions())
-        .inspect_err(|err| tracing::error!(?err, "ja4 compute failure"))
-        .ok()?;
+    if ctx.contains::<StorageAuthorized>() {
+        if let Some(storage) = ctx.state().storage.as_ref() {
+            storage
+                .store_tls_client_hello(ua, hello.clone())
+                .await
+                .context("store tls client hello")?;
+        }
+    }
 
-    let ja3 = Ja3::compute(ctx.extensions())
-        .inspect_err(|err| tracing::error!(?err, "ja3 compute failure"))
-        .ok()?;
+    let ja4 = Ja4::compute(ctx.extensions()).context("ja4 compute")?;
+    let ja3 = Ja3::compute(ctx.extensions()).context("ja3 compute")?;
 
-    Some(TlsDisplayInfo {
+    Ok(Some(TlsDisplayInfo {
         ja4: Ja4DisplayInfo {
             full: format!("{ja4:?}"),
             hash: format!("{ja4}"),
@@ -306,52 +429,64 @@ pub(super) fn get_tls_display_info(ctx: &Context<Arc<State>>) -> Option<TlsDispl
             .map(|extension| match extension {
                 ClientHelloExtension::ServerName(domain) => TlsDisplayInfoExtension {
                     id: extension.id().to_string(),
-                    data: TlsDisplayInfoExtensionData::Single(match domain {
-                        Some(domain) => domain.to_string(),
-                        None => "".to_owned(),
-                    }),
+                    data: domain
+                        .as_ref()
+                        .map(|d| TlsDisplayInfoExtensionData::Single(d.to_string())),
                 },
                 ClientHelloExtension::SignatureAlgorithms(v) => TlsDisplayInfoExtension {
                     id: extension.id().to_string(),
-                    data: TlsDisplayInfoExtensionData::Multi(
+                    data: Some(TlsDisplayInfoExtensionData::Multi(
                         v.iter().map(|s| s.to_string()).collect(),
-                    ),
+                    )),
                 },
                 ClientHelloExtension::SupportedVersions(v) => TlsDisplayInfoExtension {
                     id: extension.id().to_string(),
-                    data: TlsDisplayInfoExtensionData::Multi(
+                    data: Some(TlsDisplayInfoExtensionData::Multi(
                         v.iter().map(|s| s.to_string()).collect(),
-                    ),
+                    )),
                 },
                 ClientHelloExtension::ApplicationLayerProtocolNegotiation(v) => {
                     TlsDisplayInfoExtension {
                         id: extension.id().to_string(),
-                        data: TlsDisplayInfoExtensionData::Multi(
+                        data: Some(TlsDisplayInfoExtensionData::Multi(
                             v.iter().map(|s| s.to_string()).collect(),
-                        ),
+                        )),
                     }
                 }
                 ClientHelloExtension::SupportedGroups(v) => TlsDisplayInfoExtension {
                     id: extension.id().to_string(),
-                    data: TlsDisplayInfoExtensionData::Multi(
+                    data: Some(TlsDisplayInfoExtensionData::Multi(
                         v.iter().map(|s| s.to_string()).collect(),
-                    ),
+                    )),
                 },
                 ClientHelloExtension::ECPointFormats(v) => TlsDisplayInfoExtension {
                     id: extension.id().to_string(),
-                    data: TlsDisplayInfoExtensionData::Multi(
+                    data: Some(TlsDisplayInfoExtensionData::Multi(
                         v.iter().map(|s| s.to_string()).collect(),
-                    ),
+                    )),
+                },
+                ClientHelloExtension::CertificateCompression(v) => TlsDisplayInfoExtension {
+                    id: extension.id().to_string(),
+                    data: Some(TlsDisplayInfoExtensionData::Multi(
+                        v.iter().map(|s| s.to_string()).collect(),
+                    )),
+                },
+                ClientHelloExtension::RecordSizeLimit(v) => TlsDisplayInfoExtension {
+                    id: extension.id().to_string(),
+                    data: Some(TlsDisplayInfoExtensionData::Single(v.to_string())),
                 },
                 ClientHelloExtension::Opaque { id, data } => TlsDisplayInfoExtension {
                     id: id.to_string(),
-                    data: TlsDisplayInfoExtensionData::Single(if data.is_empty() {
-                        "EMPTY".to_owned()
+                    data: if data.is_empty() {
+                        None
                     } else {
-                        format!("0x{}", hex::encode(data))
-                    }),
+                        Some(TlsDisplayInfoExtensionData::Single(format!(
+                            "0x{}",
+                            hex::encode(data)
+                        )))
+                    },
                 },
             })
             .collect::<Vec<_>>(),
-    })
+    }))
 }

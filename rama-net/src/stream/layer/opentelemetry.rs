@@ -9,12 +9,12 @@ use rama_core::telemetry::opentelemetry::semantic_conventions::resource::{
 use rama_core::telemetry::opentelemetry::semantic_conventions::trace::{
     NETWORK_TRANSPORT, NETWORK_TYPE,
 };
-use rama_core::telemetry::opentelemetry::{
-    global,
-    metrics::{Counter, Histogram, Meter},
-    semantic_conventions, InstrumentationScope, KeyValue,
-};
 use rama_core::telemetry::opentelemetry::{AttributesFactory, MeterOptions, ServiceInfo};
+use rama_core::telemetry::opentelemetry::{
+    InstrumentationScope, KeyValue, global,
+    metrics::{Counter, Histogram, Meter},
+    semantic_conventions,
+};
 use rama_core::{Context, Layer, Service};
 use rama_utils::macros::define_inner_service_accessors;
 use std::borrow::Cow;
@@ -156,6 +156,15 @@ impl<S, F: Clone> Layer<S> for NetworkMetricsLayer<F> {
             attributes_factory: self.attributes_factory.clone(),
         }
     }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        NetworkMetricsService {
+            inner,
+            metrics: self.metrics,
+            base_attributes: self.base_attributes,
+            attributes_factory: self.attributes_factory,
+        }
+    }
 }
 
 /// A [`Service`] that records network server metrics using OpenTelemetry.
@@ -169,7 +178,7 @@ pub struct NetworkMetricsService<S, F = ()> {
 impl<S> NetworkMetricsService<S, ()> {
     /// Create a new [`NetworkMetricsService`].
     pub fn new(inner: S) -> Self {
-        NetworkMetricsLayer::new().layer(inner)
+        NetworkMetricsLayer::new().into_layer(inner)
     }
 
     define_inner_service_accessors!();
@@ -271,15 +280,21 @@ mod tests {
     fn test_default_svc_compute_attributes_default() {
         let svc = NetworkMetricsService::new(());
         let attributes = svc.compute_attributes(&Context::default());
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == SERVICE_NAME));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == SERVICE_VERSION));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == NETWORK_TRANSPORT));
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == SERVICE_NAME)
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == SERVICE_VERSION)
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == NETWORK_TRANSPORT)
+        );
     }
 
     #[test]
@@ -292,18 +307,24 @@ mod tests {
             metric_prefix: Some("foo".to_owned()),
             ..Default::default()
         })
-        .layer(());
+        .into_layer(());
 
         let attributes = svc.compute_attributes(&Context::default());
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == SERVICE_NAME && attr.value.as_str() == "test"));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == SERVICE_VERSION && attr.value.as_str() == "42"));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == NETWORK_TRANSPORT));
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == SERVICE_NAME && attr.value.as_str() == "test")
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == SERVICE_VERSION && attr.value.as_str() == "42")
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == NETWORK_TRANSPORT)
+        );
     }
 
     #[test]
@@ -317,21 +338,29 @@ mod tests {
             ..Default::default()
         })
         .with_attributes(vec![KeyValue::new("test", "attribute_fn")])
-        .layer(());
+        .into_layer(());
 
         let attributes = svc.compute_attributes(&Context::default());
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == SERVICE_NAME && attr.value.as_str() == "test"));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == SERVICE_VERSION && attr.value.as_str() == "42"));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == NETWORK_TRANSPORT));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == "test" && attr.value.as_str() == "attribute_fn"));
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == SERVICE_NAME && attr.value.as_str() == "test")
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == SERVICE_VERSION && attr.value.as_str() == "42")
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == NETWORK_TRANSPORT)
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == "test" && attr.value.as_str() == "attribute_fn")
+        );
     }
 
     #[test]
@@ -349,20 +378,28 @@ mod tests {
             attributes.push(KeyValue::new("test", "attribute_fn"));
             attributes
         })
-        .layer(());
+        .into_layer(());
 
         let attributes = svc.compute_attributes(&Context::default());
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == SERVICE_NAME && attr.value.as_str() == "test"));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == SERVICE_VERSION && attr.value.as_str() == "42"));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == NETWORK_TRANSPORT));
-        assert!(attributes
-            .iter()
-            .any(|attr| attr.key.as_str() == "test" && attr.value.as_str() == "attribute_fn"));
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == SERVICE_NAME && attr.value.as_str() == "test")
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == SERVICE_VERSION && attr.value.as_str() == "42")
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == NETWORK_TRANSPORT)
+        );
+        assert!(
+            attributes
+                .iter()
+                .any(|attr| attr.key.as_str() == "test" && attr.value.as_str() == "attribute_fn")
+        );
     }
 }

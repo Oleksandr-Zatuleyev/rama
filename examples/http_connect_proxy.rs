@@ -57,9 +57,11 @@
 //! ```
 
 use rama::{
-    context::Extensions,
+    Context, Layer, Service,
+    context::{Extensions, RequestContextExt},
     http::{
-        client::HttpClient,
+        Body, IntoResponse, Request, Response, StatusCode,
+        client::EasyHttpWebClient,
         layer::{
             proxy_auth::ProxyAuthLayer,
             remove_header::{RemoveRequestHeaderLayer, RemoveResponseHeaderLayer},
@@ -70,25 +72,24 @@ use rama::{
         response::Json,
         server::HttpServer,
         service::web::{extract::Path, match_service},
-        Body, IntoResponse, Request, Response, StatusCode,
     },
     layer::HijackLayer,
-    net::http::RequestContext,
-    net::stream::layer::http::BodyLimitLayer,
-    net::{address::Domain, user::Basic},
+    net::{
+        address::Domain, http::RequestContext, stream::ClientSocketInfo,
+        stream::layer::http::BodyLimitLayer, user::Basic,
+    },
     rt::Executor,
     service::service_fn,
     tcp::{client::default_tcp_connect, server::TcpListener, utils::is_connection_error},
     username::{
         UsernameLabelParser, UsernameLabelState, UsernameLabels, UsernameOpaqueLabelParser,
     },
-    Context, Layer, Service,
 };
 use serde::Deserialize;
 use serde_json::json;
 use std::{convert::Infallible, sync::Arc, time::Duration};
 use tracing::level_filters::LevelFilter;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() {
@@ -109,7 +110,7 @@ async fn main() {
         number: u32,
     }
 
-    graceful.spawn_task_fn(|guard| async move {
+    graceful.spawn_task_fn(async move |guard| {
         let tcp_service = TcpListener::build().bind("127.0.0.1:62001").await.expect("bind tcp proxy to 127.0.0.1:62001");
 
         let exec = Executor::graceful(guard.clone());
@@ -123,12 +124,12 @@ async fn main() {
                     HijackLayer::new(
                         DomainMatcher::exact(Domain::from_static("echo.example.internal")),
                         Arc::new(match_service!{
-                            HttpMatcher::post("/lucky/:number") => |path: Path<APILuckyParams>| async move {
+                            HttpMatcher::post("/lucky/:number") => async move |path: Path<APILuckyParams>| {
                                 Json(json!({
                                     "lucky_number": path.number,
                                 }))
                             },
-                            HttpMatcher::get("/*") => |ctx: Context<()>, req: Request| async move {
+                            HttpMatcher::get("/*") => async move |ctx: Context<()>, req: Request| {
                                 Json(json!({
                                     "method": req.method().as_str(),
                                     "path": req.uri().path(),
@@ -151,12 +152,12 @@ async fn main() {
                     RemoveResponseHeaderLayer::hop_by_hop(),
                     RemoveRequestHeaderLayer::hop_by_hop(),
                 )
-            .layer(service_fn(http_plain_proxy)));
+            .into_layer(service_fn(http_plain_proxy)));
 
             tcp_service.serve_graceful(guard, (
                 // protect the http proxy from too large bodies, both from request and response end
                 BodyLimitLayer::symmetric(2 * 1024 * 1024),
-            ).layer(http_service)).await;
+            ).into_layer(http_service)).await;
     });
 
     graceful
@@ -212,9 +213,27 @@ async fn http_plain_proxy<S>(ctx: Context<S>, req: Request) -> Result<Response, 
 where
     S: Clone + Send + Sync + 'static,
 {
-    let client = HttpClient::default();
+    let client = EasyHttpWebClient::default();
     match client.serve(ctx, req).await {
-        Ok(resp) => Ok(resp),
+        Ok(resp) => {
+            match resp
+                .extensions()
+                .get::<RequestContextExt>()
+                .and_then(|ext| ext.get::<ClientSocketInfo>())
+            {
+                Some(client_socket_info) => tracing::info!(
+                    status = %resp.status(),
+                    local_addr = ?client_socket_info.local_addr(),
+                    server_addr = %client_socket_info.peer_addr(),
+                    "http plain text proxy received response",
+                ),
+                None => tracing::info!(
+                    status = %resp.status(),
+                    "http plain text proxy received response, IP info unknown",
+                ),
+            };
+            Ok(resp)
+        }
         Err(err) => {
             tracing::error!(error = %err, "error in client request");
             Ok(Response::builder()

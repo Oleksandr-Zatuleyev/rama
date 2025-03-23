@@ -39,44 +39,55 @@
 //! ```
 
 use rama::{
+    Layer, Service,
     error::{BoxError, ErrorContext, OpaqueError},
     http::{
-        client::HttpClient,
+        Body, IntoResponse, Request, Response, StatusCode,
+        client::EasyHttpWebClient,
         layer::{
             map_response_body::MapResponseBodyLayer,
             proxy_auth::ProxyAuthLayer,
             remove_header::{RemoveRequestHeaderLayer, RemoveResponseHeaderLayer},
             required_header::AddRequiredRequestHeadersLayer,
             trace::TraceLayer,
-            traffic_writer::{self, RequestWriterLayer},
+            traffic_writer::{self, RequestWriterInspector},
             upgrade::{UpgradeLayer, Upgraded},
         },
         matcher::MethodMatcher,
         server::HttpServer,
-        Body, IntoResponse, Request, Response, StatusCode,
     },
     layer::ConsumeErrLayer,
-    net::http::RequestContext,
-    net::stream::layer::http::BodyLimitLayer,
-    net::tls::{
-        client::{ClientConfig, ClientHelloExtension, ServerVerifyMode},
-        server::{SelfSignedData, ServerAuth, ServerConfig},
-        ApplicationProtocol,
+    net::{
+        http::RequestContext,
+        stream::layer::http::BodyLimitLayer,
+        tls::{
+            ApplicationProtocol,
+            client::{ClientConfig, ClientHelloExtension, ServerVerifyMode},
+            server::{SelfSignedData, ServerAuth, ServerConfig},
+        },
+        user::Basic,
     },
-    net::user::Basic,
     rt::Executor,
     service::service_fn,
     tcp::server::TcpListener,
     tls::std::server::{TlsAcceptorData, TlsAcceptorLayer},
-    Layer, Service,
 };
-use std::{convert::Infallible, time::Duration};
+use rama_http::layer::compress_adapter::CompressAdaptLayer;
+use rama_ua::{
+    emulate::{
+        UserAgentEmulateHttpConnectModifier, UserAgentEmulateHttpRequestModifier,
+        UserAgentEmulateLayer,
+    },
+    profile::UserAgentDatabase,
+};
+use std::{convert::Infallible, sync::Arc, time::Duration};
 use tracing::level_filters::LevelFilter;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Debug, Clone)]
 struct State {
     mitm_tls_service_data: TlsAcceptorData,
+    ua_db: Arc<UserAgentDatabase>,
 }
 
 type Context = rama::Context<State>;
@@ -96,18 +107,19 @@ async fn main() -> Result<(), BoxError> {
         new_mitm_tls_service_data().context("generate self-signed mitm tls cert")?;
     let state = State {
         mitm_tls_service_data,
+        ua_db: Arc::new(UserAgentDatabase::embedded()),
     };
 
     let graceful = rama::graceful::Shutdown::default();
 
-    graceful.spawn_task_fn(|guard| async move {
-        let tcp_service = TcpListener::build_with_state(state)
+    graceful.spawn_task_fn(async |guard| {
+        let tcp_service = TcpListener::build_with_state(state.clone())
             .bind("127.0.0.1:62017")
             .await
             .expect("bind tcp proxy to 127.0.0.1:62017");
 
         let exec = Executor::graceful(guard.clone());
-        let http_mitm_service = new_http_mitm_proxy(&exec);
+        let http_mitm_service = new_http_mitm_proxy(&Context::with_state(state));
         let http_service = HttpServer::auto(exec).service(
             (
                 TraceLayer::new_for_http(),
@@ -120,7 +132,7 @@ async fn main() -> Result<(), BoxError> {
                     service_fn(http_connect_proxy),
                 ),
             )
-                .layer(http_mitm_service),
+                .into_layer(http_mitm_service),
         );
 
         tcp_service
@@ -130,7 +142,7 @@ async fn main() -> Result<(), BoxError> {
                     // protect the http proxy from too large bodies, both from request and response end
                     BodyLimitLayer::symmetric(2 * 1024 * 1024),
                 )
-                    .layer(http_service),
+                    .into_layer(http_service),
             )
             .await;
     });
@@ -172,12 +184,12 @@ async fn http_connect_proxy(ctx: Context, upgraded: Upgraded) -> Result<(), Infa
     // as we otherwise might not be able to define the scheme/authority
     // for upstream http requests.
 
-    let http_service = new_http_mitm_proxy(ctx.executor());
+    let http_service = new_http_mitm_proxy(&ctx);
 
     let http_transport_service = HttpServer::auto(ctx.executor().clone()).service(http_service);
 
     let https_service = TlsAcceptorLayer::new(ctx.state().mitm_tls_service_data.clone())
-        .layer(http_transport_service);
+        .into_layer(http_transport_service);
 
     https_service
         .serve(ctx, upgraded)
@@ -188,20 +200,21 @@ async fn http_connect_proxy(ctx: Context, upgraded: Upgraded) -> Result<(), Infa
 }
 
 fn new_http_mitm_proxy(
-    exec: &Executor,
+    ctx: &Context,
 ) -> impl Service<State, Request, Response = Response, Error = Infallible> {
     (
         MapResponseBodyLayer::new(Body::new),
         TraceLayer::new_for_http(),
+        ConsumeErrLayer::default(),
+        UserAgentEmulateLayer::new(ctx.state().ua_db.clone())
+            .try_auto_detect_user_agent(true)
+            .optional(true),
         RemoveResponseHeaderLayer::hop_by_hop(),
         RemoveRequestHeaderLayer::hop_by_hop(),
-        ConsumeErrLayer::default(),
+        CompressAdaptLayer::default(),
         AddRequiredRequestHeadersLayer::new(),
-        // these layers are for example purposes only,
-        // best not to print requests like this in production...
-        RequestWriterLayer::stdout_unbounded(exec, Some(traffic_writer::WriterMode::Headers)),
     )
-        .layer(service_fn(http_mitm_proxy))
+        .into_layer(service_fn(http_mitm_proxy))
 }
 
 async fn http_mitm_proxy(ctx: Context, req: Request) -> Result<Response, Infallible> {
@@ -210,7 +223,22 @@ async fn http_mitm_proxy(ctx: Context, req: Request) -> Result<Response, Infalli
 
     // NOTE: use a custom connector (layers) in case you wish to add custom features,
     // such as upstream proxies or other configurations
-    let mut client = HttpClient::default();
+    let mut client = EasyHttpWebClient::default()
+        .with_http_conn_req_inspector(UserAgentEmulateHttpConnectModifier::default())
+        .with_http_conn_req_inspector((
+            UserAgentEmulateHttpRequestModifier::default(),
+            // these layers are for example purposes only,
+            // best not to print requests like this in production...
+            //
+            // If you want to see the request that actually is send to the server
+            // you also usually do not want it as a layer, but instead plug the inspector
+            // directly JIT-style into your http (client) connector.
+            RequestWriterInspector::stdout_unbounded(
+                ctx.executor(),
+                Some(traffic_writer::WriterMode::Headers),
+            ),
+        ));
+
     client.set_tls_config(ClientConfig {
         server_verify_mode: Some(ServerVerifyMode::Disable),
         extensions: Some(vec![

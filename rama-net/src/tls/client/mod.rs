@@ -15,12 +15,16 @@ pub use hello::{ClientHello, ClientHelloExtension};
 #[cfg(any(test, feature = "boring"))]
 mod parser;
 
-#[cfg(test)]
-pub(crate) use parser::parse_client_hello;
+#[cfg(any(test, feature = "boring"))]
+pub use parser::parse_client_hello;
 
 mod config;
 #[doc(inline)]
-pub use config::{ClientAuth, ClientAuthData, ClientConfig, ServerVerifyMode};
+pub use config::{
+    ClientAuth, ClientAuthData, ClientConfig, ClientConfigChain, ProxyClientConfig,
+    ServerVerifyMode, append_all_client_configs_to_ctx, append_client_config_to_ctx,
+    extract_client_config_from_ctx,
+};
 
 use super::{ApplicationProtocol, DataEncoding, ProtocolVersion};
 

@@ -9,8 +9,8 @@ as a distant relative.
 
 ### hyperium
 
-- <https://github.com/hyperium/h2/tree/v0.4.7>
-- <https://github.com/hyperium/hyper/tree/v1.5.2>
+- <https://github.com/hyperium/h2/tree/v0.4.8>
+- <https://github.com/hyperium/hyper/tree/v1.6.0>
 - <https://github.com/hyperium/hyper-util/tree/v0.1.10>
 
 ### tower-rs
@@ -31,3 +31,5 @@ as a distant relative.
   - (Optional)FromRequest/ (Optional)FromRequestParts code
   - Error/BoxError
   - web::extract inspiration + Path (param) deserializion code
+- <https://github.com/dtolnay/paste/tree/6a302522990cbfd9de4e0c61d91854622f7b2999>
+  - it was no longer maintained, so we're taking it over for ourselves

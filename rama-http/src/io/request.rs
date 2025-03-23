@@ -1,6 +1,6 @@
 use crate::{
-    dep::{http_body, http_body_util::BodyExt},
     Body, Request,
+    dep::{http_body, http_body_util::BodyExt},
 };
 use bytes::Bytes;
 use rama_core::error::BoxError;
@@ -85,7 +85,7 @@ where
 
         for (name, value) in header_map {
             match parts.version {
-                http::Version::HTTP_2 | http::Version::HTTP_3 => {
+                rama_http_types::Version::HTTP_2 | rama_http_types::Version::HTTP_3 => {
                     // write lower-case for H2/H3
                     w.write_all(
                         format!("{}: {}\r\n", name.header_name().as_str(), value.to_str()?)

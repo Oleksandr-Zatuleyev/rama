@@ -13,9 +13,11 @@
 // rama provides everything out of the box to build a complete web service.
 
 use rama::{
+    Context, Layer, Service,
     http::{
-        client::HttpClient,
-        headers::{authorization::Basic, Accept, Authorization, HeaderMapExt},
+        Body, BodyExtractExt, IntoResponse, Request, Response, StatusCode,
+        client::EasyHttpWebClient,
+        headers::{Accept, Authorization, HeaderMapExt, authorization::Basic},
         layer::{
             auth::{AddAuthorizationLayer, AsyncRequireAuthorizationLayer},
             compression::CompressionLayer,
@@ -27,11 +29,9 @@ use rama::{
         server::HttpServer,
         service::client::HttpClientExt,
         service::web::WebService,
-        Body, BodyExtractExt, IntoResponse, Request, Response, StatusCode,
     },
     rt::Executor,
     utils::{backoff::ExponentialBackoff, rng::HasherRng},
-    Context, Layer, Service,
 };
 
 // Everything else we need is provided by the standard library, community crates or tokio.
@@ -41,16 +41,14 @@ use std::time::Duration;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt};
 
 const ADDRESS: &str = "127.0.0.1:62004";
 
 #[tokio::main]
 async fn main() {
     setup_tracing();
-    tokio::spawn(async move {
-        run_server(ADDRESS).await;
-    });
+    tokio::spawn(run_server(ADDRESS));
 
     // Thanks to the import of [`rama::http::client::HttpClientExt`] we can now also
     // use the high level API for this service stack.
@@ -79,7 +77,7 @@ async fn main() {
             ),
         ),
     )
-        .layer(HttpClient::default());
+        .into_layer(EasyHttpWebClient::default());
 
     //--------------------------------------------------------------------------------
     // Low Level (Regular) http client (stack) service example.
@@ -182,12 +180,12 @@ async fn run_server(addr: &str) {
                 CompressionLayer::new(),
                 AsyncRequireAuthorizationLayer::new(auth_request),
             )
-                .layer(
+                .into_layer(
                     WebService::default()
                         .get("/", "Hello, World!")
                         .get(
                             "/info",
-                            |req: Request| async move {
+                            async |req: Request| {
                                 req.headers()
                                     .get("x-magic")
                                     .and_then(|v| v.to_str().ok())
@@ -206,7 +204,7 @@ async fn run_server(addr: &str) {
                         )
                         .post(
                             "/introduce",
-                            |Json(data): Json<serde_json::Value>| async move {
+                            async |Json(data): Json<serde_json::Value>| {
                                 format!("Hello, {}!", data["name"].as_str().unwrap())
                             },
                         ),

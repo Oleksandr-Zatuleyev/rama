@@ -1,10 +1,10 @@
 #![allow(unused_imports)]
 
+use crate::HeaderMap;
 use crate::dep::http_body::{Body, Frame};
 use crate::layer::util::compression::{
     AsyncReadBody, BodyIntoStream, CompressionLevel, DecorateAsyncRead, WrapBody,
 };
-use crate::HeaderMap;
 use rama_core::error::BoxError;
 
 use async_compression::tokio::bufread::{BrotliEncoder, GzipEncoder, ZlibEncoder, ZstdEncoder};
@@ -143,11 +143,11 @@ where
         }
     }
 
-    fn size_hint(&self) -> http_body::SizeHint {
+    fn size_hint(&self) -> rama_http_types::dep::http_body::SizeHint {
         if let BodyInner::Identity { inner } = &self.inner {
             inner.size_hint()
         } else {
-            http_body::SizeHint::new()
+            rama_http_types::dep::http_body::SizeHint::new()
         }
     }
 

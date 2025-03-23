@@ -27,6 +27,7 @@
 
 // rama provides everything out of the box to build mtls web services and proxies
 use rama::{
+    Layer,
     graceful::Shutdown,
     http::{
         layer::trace::TraceLayer,
@@ -46,14 +47,13 @@ use rama::{
     tcp::server::TcpListener,
     tls::rustls::client::{TlsConnectorData, TlsConnectorLayer},
     tls::rustls::server::{TlsAcceptorData, TlsAcceptorLayer},
-    Layer,
 };
 
 // everything else is provided by the standard library, community crates or tokio
 use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 use tracing::metadata::LevelFilter;
-use tracing_subscriber::{fmt, prelude::*, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 const LOCALHOST: Host = Host::Address(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
 const SERVER_AUTHORITY: Authority = Authority::new(LOCALHOST, 63014);
@@ -102,12 +102,12 @@ async fn main() {
         TlsAcceptorData::try_from(tls_server_config).expect("create tls acceptor data for server");
 
     // create mtls web server
-    shutdown.spawn_task_fn(|guard| async move {
+    shutdown.spawn_task_fn(async |guard| {
         let executor = Executor::graceful(guard.clone());
 
-        let tcp_service = TlsAcceptorLayer::new(tls_server_data).layer(
+        let tcp_service = TlsAcceptorLayer::new(tls_server_data).into_layer(
             HttpServer::auto(executor).service(
-                TraceLayer::new_for_http().layer(
+                TraceLayer::new_for_http().into_layer(
                     WebService::default()
                         .get("/", Redirect::temporary("/hello"))
                         .get("/hello", Html("<h1>Hello, authorized client!</h1>")),
@@ -126,20 +126,20 @@ async fn main() {
     });
 
     // create mtls tunnel proxy
-    shutdown.spawn_task_fn(|guard| async move {
+    shutdown.spawn_task_fn(async |guard| {
         tracing::info!("start mTLS TCP Tunnel Proxys: {}", TUNNEL_AUTHORITY);
 
         let forwarder = Forwarder::new(SERVER_AUTHORITY).connector(
             TlsConnectorLayer::tunnel(Some(SERVER_AUTHORITY.into_host()))
                 .with_connector_data(tls_client_data)
-                .layer(TcpConnector::new()),
+                .into_layer(TcpConnector::new()),
         );
 
         // L4 Proxy Service
         TcpListener::bind(TUNNEL_AUTHORITY.to_string())
             .await
             .expect("bind TCP Listener: mTLS TCP Tunnel Proxys")
-            .serve_graceful(guard, TraceErrLayer::new().layer(forwarder))
+            .serve_graceful(guard, TraceErrLayer::new().into_layer(forwarder))
             .await;
     });
 

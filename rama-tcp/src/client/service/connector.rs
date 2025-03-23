@@ -1,11 +1,12 @@
 use rama_core::{
-    error::{BoxError, ErrorContext, ErrorExt, OpaqueError},
     Context, Service,
+    error::{BoxError, ErrorContext, ErrorExt, OpaqueError},
 };
 use rama_dns::{DnsResolver, HickoryDns};
 use rama_net::{
     address::ProxyAddress,
     client::EstablishedClientConnection,
+    stream::{ClientSocketInfo, SocketInfo},
     transport::{TransportProtocol, TryRefIntoTransportContext},
 };
 use tokio::net::TcpStream;
@@ -116,12 +117,20 @@ where
             )
             .await
             .context("tcp connector: conncept to proxy")?;
-            return Ok(EstablishedClientConnection {
-                ctx,
-                req,
-                conn,
+
+            ctx.insert(ClientSocketInfo(SocketInfo::new(
+                conn.local_addr()
+                    .inspect_err(|err| {
+                        tracing::debug!(
+                            ?err,
+                            "failed to receive local addr of established connection to proxy"
+                        )
+                    })
+                    .ok(),
                 addr,
-            });
+            )));
+
+            return Ok(EstablishedClientConnection { ctx, req, conn });
         }
 
         let transport_ctx = ctx
@@ -148,11 +157,18 @@ where
                 .await
                 .context("tcp connector: connect to server")?;
 
-        Ok(EstablishedClientConnection {
-            ctx,
-            req,
-            conn,
+        ctx.insert(ClientSocketInfo(SocketInfo::new(
+            conn.local_addr()
+                .inspect_err(|err| {
+                    tracing::debug!(
+                        ?err,
+                        "failed to receive local addr of established connection"
+                    )
+                })
+                .ok(),
             addr,
-        })
+        )));
+
+        Ok(EstablishedClientConnection { ctx, req, conn })
     }
 }

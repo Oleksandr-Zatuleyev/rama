@@ -2,7 +2,6 @@ use super::extract::{FromRequest, FromRequestContextRefPair};
 use crate::{IntoResponse, Request, Response};
 use rama_core::Context;
 use rama_utils::macros::all_the_tuples_no_last_special_case;
-use std::future::Future;
 
 /// [`rama_core::Service`] implemented for functions taking extractors.
 pub trait EndpointServiceFn<S, T>: private::Sealed<S, T> + Clone + Send + Sync + 'static {}
@@ -124,7 +123,7 @@ mod private {
         /// It is expected to do so by extracting the desired data from the context and/or request,
         /// and then calling the function with the extracted data.
         fn call(&self, ctx: Context<S>, req: Request)
-            -> impl Future<Output = Response> + Send + '_;
+        -> impl Future<Output = Response> + Send + '_;
     }
 
     impl<F, R, O, S> Sealed<S, (F, R, O)> for F

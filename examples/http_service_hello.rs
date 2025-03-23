@@ -21,8 +21,9 @@
 
 use bytes::Bytes;
 use rama::{
+    Context, Layer,
     http::{
-        header,
+        IntoResponse, Request, header,
         layer::{
             compression::CompressionLayer,
             sensitive_headers::{
@@ -32,22 +33,20 @@ use rama::{
         },
         response::Html,
         server::HttpServer,
-        IntoResponse, Request,
     },
     layer::{MapResponseLayer, TimeoutLayer, TraceErrLayer},
     net::stream::{
-        layer::{BytesRWTrackerHandle, IncomingBytesTrackerLayer},
         SocketInfo,
+        layer::{BytesRWTrackerHandle, IncomingBytesTrackerLayer},
     },
     rt::Executor,
     service::service_fn,
     tcp::server::TcpListener,
     utils::latency::LatencyUnit,
-    Context, Layer,
 };
 use std::{sync::Arc, time::Duration};
 use tracing::level_filters::LevelFilter;
-use tracing_subscriber::{fmt, layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() {
@@ -64,7 +63,7 @@ async fn main() {
 
     let sensitive_headers: Arc<[_]> = vec![header::AUTHORIZATION, header::COOKIE].into();
 
-    graceful.spawn_task_fn(|guard| async move {
+    graceful.spawn_task_fn(async |guard| {
         let exec = Executor::graceful(guard.clone());
 
         let http_service = (
@@ -78,8 +77,8 @@ async fn main() {
                 .on_response(DefaultOnResponse::new().include_headers(true).latency_unit(LatencyUnit::Micros)),
             SetSensitiveResponseHeadersLayer::from_shared(sensitive_headers),
             MapResponseLayer::new(IntoResponse::into_response),
-        ).layer(service_fn(
-                |ctx: Context<()>, req: Request| async move {
+        ).into_layer(service_fn(
+                async |ctx: Context<()>, req: Request| {
                     let socket_info = ctx.get::<SocketInfo>().unwrap();
                     let tracker = ctx.get::<BytesRWTrackerHandle>().unwrap();
                     Ok(Html(format!(
@@ -118,7 +117,7 @@ async fn main() {
                     TraceErrLayer::new(),
                     TimeoutLayer::new(Duration::from_secs(8)),
                     IncomingBytesTrackerLayer::new(),
-                ).layer(tcp_http_service),
+                ).into_layer(tcp_http_service),
             )
             .await;
     });

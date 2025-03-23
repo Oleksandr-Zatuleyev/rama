@@ -2,8 +2,7 @@
 
 use crate::user::{Basic, UserId};
 use rama_core::context::Extensions;
-use rama_core::username::{parse_username, UsernameLabelParser};
-use std::future::Future;
+use rama_core::username::{UsernameLabelParser, parse_username};
 
 // TODO: decouple this from http
 use rama_http_types::headers::authorization::Credentials;

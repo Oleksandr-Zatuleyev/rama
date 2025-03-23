@@ -2,10 +2,9 @@
 use rama::http::{Method, Request};
 
 use futures::stream::FuturesUnordered;
-use futures::{future, Stream};
+use futures::{Stream, future};
 use libfuzzer_sys::fuzz_target;
 
-use std::future::Future;
 use std::io;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -26,7 +25,7 @@ impl MockIo<'_> {
     }
 
     fn next_u32(&mut self) -> u32 {
-        (self.next_byte().unwrap_or(0) as u32) << 8 | self.next_byte().unwrap_or(0) as u32
+        ((self.next_byte().unwrap_or(0) as u32) << 8) | self.next_byte().unwrap_or(0) as u32
     }
 }
 

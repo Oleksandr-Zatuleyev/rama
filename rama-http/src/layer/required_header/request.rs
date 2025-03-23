@@ -4,13 +4,13 @@
 //! as well as always a User-Agent for all versions.
 
 use crate::{
+    HeaderValue, Request, Response,
     header::{self, HOST, RAMA_ID_HEADER_VALUE, USER_AGENT},
     headers::HeaderMapExt,
-    HeaderValue, Request, Response,
 };
 use rama_core::{
-    error::{BoxError, ErrorContext},
     Context, Layer, Service,
+    error::{BoxError, ErrorContext},
 };
 use rama_net::http::RequestContext;
 use rama_utils::macros::define_inner_service_accessors;
@@ -85,6 +85,14 @@ impl<S> Layer<S> for AddRequiredRequestHeadersLayer {
             inner,
             overwrite: self.overwrite,
             user_agent_header_value: self.user_agent_header_value.clone(),
+        }
+    }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        AddRequiredRequestHeaders {
+            inner,
+            overwrite: self.overwrite,
+            user_agent_header_value: self.user_agent_header_value,
         }
     }
 }
@@ -224,11 +232,11 @@ mod test {
 
     #[tokio::test]
     async fn add_required_request_headers() {
-        let svc = AddRequiredRequestHeadersLayer::default().layer(service_fn(
-            |_ctx: Context<()>, req: Request| async move {
+        let svc = AddRequiredRequestHeadersLayer::default().into_layer(service_fn(
+            async |_ctx: Context<()>, req: Request| {
                 assert!(req.headers().contains_key(HOST));
                 assert!(req.headers().contains_key(USER_AGENT));
-                Ok::<_, Infallible>(http::Response::new(Body::empty()))
+                Ok::<_, Infallible>(rama_http_types::Response::new(Body::empty()))
             },
         ));
 
@@ -246,13 +254,13 @@ mod test {
     async fn add_required_request_headers_custom_ua() {
         let svc = AddRequiredRequestHeadersLayer::default()
             .user_agent_header_value(HeaderValue::from_static("foo"))
-            .layer(service_fn(|_ctx: Context<()>, req: Request| async move {
+            .into_layer(service_fn(async |_ctx: Context<()>, req: Request| {
                 assert!(req.headers().contains_key(HOST));
                 assert_eq!(
                     req.headers().get(USER_AGENT).and_then(|v| v.to_str().ok()),
                     Some("foo")
                 );
-                Ok::<_, Infallible>(http::Response::new(Body::empty()))
+                Ok::<_, Infallible>(rama_http_types::Response::new(Body::empty()))
             }));
 
         let req = Request::builder()
@@ -269,13 +277,13 @@ mod test {
     async fn add_required_request_headers_overwrite() {
         let svc = AddRequiredRequestHeadersLayer::new()
             .overwrite(true)
-            .layer(service_fn(|_ctx: Context<()>, req: Request| async move {
+            .into_layer(service_fn(async |_ctx: Context<()>, req: Request| {
                 assert_eq!(req.headers().get(HOST).unwrap(), "127.0.0.1:80");
                 assert_eq!(
                     req.headers().get(USER_AGENT).unwrap(),
                     RAMA_ID_HEADER_VALUE.to_str().unwrap()
                 );
-                Ok::<_, Infallible>(http::Response::new(Body::empty()))
+                Ok::<_, Infallible>(rama_http_types::Response::new(Body::empty()))
             }));
 
         let req = Request::builder()
@@ -296,13 +304,13 @@ mod test {
         let svc = AddRequiredRequestHeadersLayer::new()
             .overwrite(true)
             .user_agent_header_value(HeaderValue::from_static("foo"))
-            .layer(service_fn(|_ctx: Context<()>, req: Request| async move {
+            .into_layer(service_fn(async |_ctx: Context<()>, req: Request| {
                 assert_eq!(req.headers().get(HOST).unwrap(), "127.0.0.1:80");
                 assert_eq!(
                     req.headers().get(USER_AGENT).and_then(|v| v.to_str().ok()),
                     Some("foo")
                 );
-                Ok::<_, Infallible>(http::Response::new(Body::empty()))
+                Ok::<_, Infallible>(rama_http_types::Response::new(Body::empty()))
             }));
 
         let req = Request::builder()

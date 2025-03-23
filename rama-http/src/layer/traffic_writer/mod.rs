@@ -3,18 +3,18 @@
 //! Can be useful for cli / debug purposes.
 
 use crate::{
-    io::{write_http_request, write_http_response},
     Request, Response,
+    io::{write_http_request, write_http_response},
 };
 use rama_core::rt::Executor;
 use tokio::{
     io::{AsyncWrite, AsyncWriteExt},
-    sync::mpsc::{channel, unbounded_channel, Sender, UnboundedSender},
+    sync::mpsc::{Sender, UnboundedSender, channel, unbounded_channel},
 };
 
 mod request;
 #[doc(inline)]
-pub use request::{DoNotWriteRequest, RequestWriter, RequestWriterLayer, RequestWriterService};
+pub use request::{DoNotWriteRequest, RequestWriter, RequestWriterInspector};
 
 mod response;
 #[doc(inline)]

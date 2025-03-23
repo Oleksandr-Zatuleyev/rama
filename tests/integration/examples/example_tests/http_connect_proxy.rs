@@ -1,12 +1,12 @@
 use super::utils;
 use rama::{
-    http::{response::Json, server::HttpServer, BodyExtractExt, Request},
+    Context,
+    http::{BodyExtractExt, Request, response::Json, server::HttpServer},
     net::address::ProxyAddress,
     rt::Executor,
     service::service_fn,
-    Context,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 #[tokio::test]
 #[ignore]
@@ -17,7 +17,7 @@ async fn test_http_connect_proxy() {
         HttpServer::auto(Executor::default())
             .listen(
                 "127.0.0.1:63001",
-                service_fn(|req: Request| async move {
+                service_fn(async |req: Request| {
                     Ok(Json(json!({
                         "method": req.method().as_str(),
                         "path": req.uri().path(),

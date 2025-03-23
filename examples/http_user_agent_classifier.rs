@@ -17,11 +17,11 @@
 //! You should see a response with `HTTP/1.1 200 OK` and a JSON body with the user agent info exposed by Rama.
 
 use rama::{
+    Context, Layer,
     http::layer::ua::{UserAgent, UserAgentClassifierLayer},
-    http::{response::Json, server::HttpServer, HeaderName, IntoResponse, Request, Response},
+    http::{HeaderName, IntoResponse, Request, Response, response::Json, server::HttpServer},
     rt::Executor,
     service::service_fn,
-    Context, Layer,
 };
 use serde_json::json;
 use std::convert::Infallible;
@@ -34,7 +34,7 @@ async fn main() {
             "127.0.0.1:62015",
             UserAgentClassifierLayer::new()
                 .overwrite_header(HeaderName::from_static("x-proxy-ua"))
-                .layer(service_fn(handle)),
+                .into_layer(service_fn(handle)),
         )
         .await
         .unwrap();
@@ -47,8 +47,8 @@ async fn handle(ctx: Context<()>, _req: Request) -> Result<Response, Infallible>
         "kind": ua.info().map(|info| info.kind.to_string()),
         "version": ua.info().and_then(|info| info.version),
         "platform": ua.platform().map(|p| p.to_string()),
-        "http_agent": ua.http_agent().to_string(),
-        "tls_agent": ua.tls_agent().to_string(),
+        "http_agent": ua.http_agent().as_ref().map(ToString::to_string),
+        "tls_agent": ua.tls_agent().as_ref().map(ToString::to_string),
     }))
     .into_response())
 }

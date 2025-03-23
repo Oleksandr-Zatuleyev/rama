@@ -99,7 +99,7 @@
 //! # #[tokio::main]
 //! # async fn main() -> Result<(), BoxError> {
 //! let service =
-//!     AsyncRequireAuthorizationLayer::new(|request: Request| async move {
+//!     AsyncRequireAuthorizationLayer::new(async |request: Request| {
 //!         if let Some(user_id) = check_auth(&request).await {
 //!             Ok(request)
 //!         } else {
@@ -119,7 +119,6 @@
 use crate::{Request, Response};
 use rama_core::{Context, Layer, Service};
 use rama_utils::macros::define_inner_service_accessors;
-use std::future::Future;
 
 /// Layer that applies [`AsyncRequireAuthorization`] which authorizes all requests using the
 /// [`Authorization`] header.
@@ -147,6 +146,10 @@ where
 
     fn layer(&self, inner: S) -> Self::Service {
         AsyncRequireAuthorization::new(inner, self.auth.clone())
+    }
+
+    fn into_layer(self, inner: S) -> Self::Service {
+        AsyncRequireAuthorization::new(inner, self.auth)
     }
 }
 
@@ -214,10 +217,10 @@ pub trait AsyncAuthorizeRequest<S, B> {
         &self,
         ctx: Context<S>,
         request: Request<B>,
-    ) -> impl std::future::Future<
+    ) -> impl Future<
         Output = Result<(Context<S>, Request<Self::RequestBody>), Response<Self::ResponseBody>>,
     > + Send
-           + '_;
+    + '_;
 }
 
 impl<S, B, F, Fut, ReqBody, ResBody> AsyncAuthorizeRequest<S, B> for F
@@ -247,7 +250,7 @@ mod tests {
     #[allow(unused_imports)]
     use super::*;
 
-    use crate::{header, Body, StatusCode};
+    use crate::{Body, StatusCode, header};
     use rama_core::error::BoxError;
     use rama_core::service::service_fn;
 
@@ -271,7 +274,7 @@ mod tests {
             let authorized = request
                 .headers()
                 .get(header::AUTHORIZATION)
-                .and_then(|it: &http::HeaderValue| it.to_str().ok())
+                .and_then(|it: &rama_http_types::HeaderValue| it.to_str().ok())
                 .and_then(|it| it.strip_prefix("Bearer "))
                 .map(|it| it == "69420")
                 .unwrap_or(false);
