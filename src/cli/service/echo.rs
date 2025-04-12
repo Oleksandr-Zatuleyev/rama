@@ -12,7 +12,9 @@ use crate::{
     error::{BoxError, OpaqueError},
     http::{
         IntoResponse, Request, Response, Version,
+        conn::LastPeerPriorityParams,
         dep::http_body_util::BodyExt,
+        header::USER_AGENT,
         headers::{CFConnectingIp, ClientIp, TrueClientIp, XClientIp, XRealIp},
         layer::{
             forwarded::GetForwardedHeadersLayer,
@@ -22,6 +24,7 @@ use crate::{
         },
         proto::h1::Http1HeaderMap,
         proto::h2::PseudoHeaderOrder,
+        proto::h2::frame::InitialPeerSettings,
         response::Json,
         server::HttpServer,
     },
@@ -30,13 +33,11 @@ use crate::{
     net::forwarded::Forwarded,
     net::http::RequestContext,
     net::stream::{SocketInfo, layer::http::BodyLimitLayer},
+    net::tls::client::{ECHClientHello, NegotiatedTlsParameters},
     proxy::haproxy::server::HaProxyLayer,
     rt::Executor,
+    ua::profile::UserAgentDatabase,
 };
-use serde_json::json;
-use std::{convert::Infallible, time::Duration};
-use tokio::net::TcpStream;
-
 #[cfg(any(feature = "rustls", feature = "boring"))]
 use crate::{
     net::fingerprint::{Ja3, Ja4},
@@ -44,6 +45,10 @@ use crate::{
     tls::std::server::TlsAcceptorLayer,
     tls::types::{SecureTransport, client::ClientHelloExtension},
 };
+use serde::Serialize;
+use serde_json::json;
+use std::{convert::Infallible, time::Duration};
+use tokio::net::TcpStream;
 
 #[derive(Debug, Clone)]
 /// Builder that can be used to run your own echo [`Service`],
@@ -60,6 +65,8 @@ pub struct EchoServiceBuilder<H> {
     http_version: Option<Version>,
 
     http_service_builder: H,
+
+    uadb: Option<std::sync::Arc<UserAgentDatabase>>,
 }
 
 impl Default for EchoServiceBuilder<()> {
@@ -76,6 +83,8 @@ impl Default for EchoServiceBuilder<()> {
             http_version: None,
 
             http_service_builder: (),
+
+            uadb: None,
         }
     }
 }
@@ -219,7 +228,33 @@ impl<H> EchoServiceBuilder<H> {
             http_version: self.http_version,
 
             http_service_builder: (self.http_service_builder, layer),
+
+            uadb: self.uadb,
         }
+    }
+
+    /// set the user agent datasbase that if set would be used to look up
+    /// a user agent (by ua header string) to see if we have a ja3/ja4 hash.
+    pub fn with_user_agent_database(mut self, db: std::sync::Arc<UserAgentDatabase>) -> Self {
+        self.uadb = Some(db);
+        self
+    }
+
+    /// maybe set the user agent datasbase that if set would be used to look up
+    /// a user agent (by ua header string) to see if we have a ja3/ja4 hash.
+    pub fn maybe_with_user_agent_database(
+        mut self,
+        db: Option<std::sync::Arc<UserAgentDatabase>>,
+    ) -> Self {
+        self.uadb = db;
+        self
+    }
+
+    /// set the user agent datasbase that if set would be used to look up
+    /// a user agent (by ua header string) to see if we have a ja3/ja4 hash.
+    pub fn set_user_agent_database(&mut self, db: std::sync::Arc<UserAgentDatabase>) -> &mut Self {
+        self.uadb = Some(db);
+        self
     }
 }
 
@@ -233,38 +268,12 @@ where
         mut self,
         executor: Executor,
     ) -> Result<impl Service<(), TcpStream, Response = (), Error = Infallible>, BoxError> {
-        let (tcp_forwarded_layer, http_forwarded_layer) = match &self.forward {
-            None => (None, None),
-            Some(ForwardKind::Forwarded) => (
-                None,
-                Some(Either7::A(GetForwardedHeadersLayer::forwarded())),
-            ),
-            Some(ForwardKind::XForwardedFor) => (
-                None,
-                Some(Either7::B(GetForwardedHeadersLayer::x_forwarded_for())),
-            ),
-            Some(ForwardKind::XClientIp) => (
-                None,
-                Some(Either7::C(GetForwardedHeadersLayer::<XClientIp>::new())),
-            ),
-            Some(ForwardKind::ClientIp) => (
-                None,
-                Some(Either7::D(GetForwardedHeadersLayer::<ClientIp>::new())),
-            ),
-            Some(ForwardKind::XRealIp) => (
-                None,
-                Some(Either7::E(GetForwardedHeadersLayer::<XRealIp>::new())),
-            ),
-            Some(ForwardKind::CFConnectingIp) => (
-                None,
-                Some(Either7::F(GetForwardedHeadersLayer::<CFConnectingIp>::new())),
-            ),
-            Some(ForwardKind::TrueClientIp) => (
-                None,
-                Some(Either7::G(GetForwardedHeadersLayer::<TrueClientIp>::new())),
-            ),
-            Some(ForwardKind::HaProxy) => (Some(HaProxyLayer::default()), None),
+        let tcp_forwarded_layer = match &self.forward {
+            Some(ForwardKind::HaProxy) => Some(HaProxyLayer::default()),
+            _ => None,
         };
+
+        let http_service = self.build_http();
 
         #[cfg(any(feature = "rustls", feature = "boring"))]
         let tls_acceptor_data = match self.tls_server_config {
@@ -283,15 +292,6 @@ where
             tls_acceptor_data.map(|data| TlsAcceptorLayer::new(data).with_store_client_hello(true)),
         );
 
-        let http_service = (
-            TraceLayer::new_for_http(),
-            AddRequiredResponseHeadersLayer::default(),
-            UserAgentClassifierLayer::new(),
-            ConsumeErrLayer::default(),
-            http_forwarded_layer,
-        )
-            .into_layer(self.http_service_builder.into_layer(EchoService));
-
         let http_transport_service = match self.http_version {
             Some(Version::HTTP_2) => Either3::A(HttpServer::h2(executor).service(http_service)),
             Some(Version::HTTP_11 | Version::HTTP_10 | Version::HTTP_09) => {
@@ -305,12 +305,53 @@ where
 
         Ok(tcp_service_builder.into_layer(http_transport_service))
     }
+
+    /// build an http service ready to echo http traffic back
+    pub fn build_http(
+        &self,
+    ) -> impl Service<(), Request, Response: IntoResponse, Error = Infallible> + use<H> {
+        let http_forwarded_layer = match &self.forward {
+            None | Some(ForwardKind::HaProxy) => None,
+            Some(ForwardKind::Forwarded) => Some(Either7::A(GetForwardedHeadersLayer::forwarded())),
+            Some(ForwardKind::XForwardedFor) => {
+                Some(Either7::B(GetForwardedHeadersLayer::x_forwarded_for()))
+            }
+            Some(ForwardKind::XClientIp) => {
+                Some(Either7::C(GetForwardedHeadersLayer::<XClientIp>::new()))
+            }
+            Some(ForwardKind::ClientIp) => {
+                Some(Either7::D(GetForwardedHeadersLayer::<ClientIp>::new()))
+            }
+            Some(ForwardKind::XRealIp) => {
+                Some(Either7::E(GetForwardedHeadersLayer::<XRealIp>::new()))
+            }
+            Some(ForwardKind::CFConnectingIp) => {
+                Some(Either7::F(GetForwardedHeadersLayer::<CFConnectingIp>::new()))
+            }
+            Some(ForwardKind::TrueClientIp) => {
+                Some(Either7::G(GetForwardedHeadersLayer::<TrueClientIp>::new()))
+            }
+        };
+
+        (
+            TraceLayer::new_for_http(),
+            AddRequiredResponseHeadersLayer::default(),
+            UserAgentClassifierLayer::new(),
+            ConsumeErrLayer::default(),
+            http_forwarded_layer,
+        )
+            .into_layer(self.http_service_builder.layer(EchoService {
+                uadb: self.uadb.clone(),
+            }))
+    }
 }
 
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 /// The inner echo-service used by the [`EchoServiceBuilder`].
-pub struct EchoService;
+pub struct EchoService {
+    uadb: Option<std::sync::Arc<UserAgentDatabase>>,
+}
 
 impl Service<(), Request> for EchoService {
     type Response = Response;
@@ -338,18 +379,69 @@ impl Service<(), Request> for EchoService {
         let authority = request_context.authority.to_string();
         let scheme = request_context.protocol.to_string();
 
-        let pseudo_headers: Option<Vec<_>> = req
-            .extensions()
-            .get::<PseudoHeaderOrder>()
-            .map(|o| o.iter().collect());
+        let ua_str = req
+            .headers()
+            .get(USER_AGENT)
+            .and_then(|h| h.to_str().ok())
+            .map(ToOwned::to_owned);
+        tracing::debug!(?ua_str, "echo request received from ua with ua header");
+
+        #[derive(Debug, Serialize)]
+        struct FingerprintProfileData {
+            hash: String,
+            verbose: String,
+            matched: bool,
+        }
 
         let ja4h = Ja4H::compute(&req)
             .inspect_err(|err| tracing::error!(?err, "ja4h compute failure"))
             .ok()
             .map(|ja4h| {
+                let mut profile_ja4h: Option<FingerprintProfileData> = None;
+
+                if let Some(uadb) = self.uadb.as_deref() {
+                    if let Some(profile) =
+                        ua_str.as_deref().and_then(|s| uadb.get_exact_header_str(s))
+                    {
+                        let matched_ja4h = match req.version() {
+                            Version::HTTP_10 | Version::HTTP_11 => profile
+                                .http
+                                .ja4h_h1_navigate(Some(req.method().clone()))
+                                .inspect_err(|err| {
+                                    tracing::trace!(
+                                        ?err,
+                                        "ja4h computation of matched profile for incoming h1 req"
+                                    )
+                                })
+                                .ok(),
+                            Version::HTTP_2 => profile
+                                .http
+                                .ja4h_h2_navigate(Some(req.method().clone()))
+                                .inspect_err(|err| {
+                                    tracing::trace!(
+                                        ?err,
+                                        "ja4h computation of matched profile for incoming h2 req"
+                                    )
+                                })
+                                .ok(),
+                            _ => None,
+                        };
+                        if let Some(tgt) = matched_ja4h {
+                            let hash = format!("{tgt}");
+                            let matched = format!("{ja4h}") == hash;
+                            profile_ja4h = Some(FingerprintProfileData {
+                                hash,
+                                verbose: format!("{tgt:?}"),
+                                matched,
+                            });
+                        }
+                    }
+                }
+
                 json!({
                     "hash": format!("{ja4h}"),
-                    "raw": format!("{ja4h:?}"),
+                    "verbose": format!("{ja4h:?}"),
+                    "profile": profile_ja4h,
                 })
             });
 
@@ -371,29 +463,89 @@ impl Service<(), Request> for EchoService {
         let body = hex::encode(body.as_ref());
 
         #[cfg(any(feature = "rustls", feature = "boring"))]
-        let tls_client_hello = ctx
+        let tls_info = ctx
             .get::<SecureTransport>()
             .and_then(|st| st.client_hello())
             .map(|hello| {
                 let ja4 = Ja4::compute(ctx.extensions())
                     .inspect_err(|err| tracing::trace!(?err, "ja4 computation"))
-                    .ok()
-                    .map(|ja4| {
-                        json!({
-                            "hash": format!("{ja4}"),
-                            "raw": format!("{ja4:?}"),
-                        })
-                    });
+                    .ok();
+
+                let mut profile_ja4: Option<FingerprintProfileData> = None;
+
+                if let Some(uadb) = self.uadb.as_deref() {
+                    if let Some(profile) =
+                        ua_str.as_deref().and_then(|s| uadb.get_exact_header_str(s))
+                    {
+                        let matched_ja4 = profile
+                            .tls
+                            .compute_ja4(
+                                ctx.get::<NegotiatedTlsParameters>()
+                                    .map(|param| param.protocol_version),
+                            )
+                            .inspect_err(|err| {
+                                tracing::trace!(?err, "ja4 computation of matched profile")
+                            })
+                            .ok();
+                        if let (Some(src), Some(tgt)) = (ja4.as_ref(), matched_ja4) {
+                            let hash = format!("{tgt}");
+                            let matched = format!("{src}") == hash;
+                            profile_ja4 = Some(FingerprintProfileData {
+                                hash,
+                                verbose: format!("{tgt:?}"),
+                                matched,
+                            });
+                        }
+                    }
+                }
+
+                let ja4 = ja4.map(|ja4| {
+                    json!({
+                        "hash": format!("{ja4}"),
+                        "verbose": format!("{ja4:?}"),
+                        "profile": profile_ja4,
+                    })
+                });
 
                 let ja3 = Ja3::compute(ctx.extensions())
                     .inspect_err(|err| tracing::trace!(?err, "ja3 computation"))
-                    .ok()
-                    .map(|ja3| {
-                        json!({
-                            "full": format!("{ja3}"),
-                            "hash": format!("{ja3:x}"),
-                        })
-                    });
+                    .ok();
+
+                let mut profile_ja3: Option<FingerprintProfileData> = None;
+
+                if let Some(uadb) = self.uadb.as_deref() {
+                    if let Some(profile) =
+                        ua_str.as_deref().and_then(|s| uadb.get_exact_header_str(s))
+                    {
+                        let matched_ja3 = profile
+                            .tls
+                            .compute_ja3(
+                                ctx.get::<NegotiatedTlsParameters>()
+                                    .map(|param| param.protocol_version),
+                            )
+                            .inspect_err(|err| {
+                                tracing::trace!(?err, "ja3 computation of matched profile")
+                            })
+                            .ok();
+                        if let (Some(src), Some(tgt)) = (ja3.as_ref(), matched_ja3) {
+                            let hash = format!("{tgt:x}");
+                            let matched = format!("{src:x}") == hash;
+                            profile_ja3 = Some(FingerprintProfileData {
+                                hash,
+                                verbose: format!("{tgt}"),
+                                matched,
+                            });
+                        }
+                    }
+                }
+
+                let ja3 = ja3.map(|ja3| {
+                    json!({
+                        "hash": format!("{ja3:x}"),
+                        "verbose": format!("{ja3}"),
+                        "profile": profile_ja3,
+                    })
+                });
 
                 json!({
                     "header": {
@@ -432,10 +584,36 @@ impl Service<(), Request> for EchoService {
                             "id": extension.id().to_string(),
                             "data": v.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
                         }),
+                        ClientHelloExtension::DelegatedCredentials(v) => json!({
+                            "id": extension.id().to_string(),
+                            "data": v.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+                        }),
                         ClientHelloExtension::RecordSizeLimit(v) => json!({
                             "id": extension.id().to_string(),
                             "data": v.to_string(),
                         }),
+                        ClientHelloExtension::EncryptedClientHello(ech) => match ech {
+                            ECHClientHello::Outer(ech) => json!({
+                                "id": extension.id().to_string(),
+                                "data": {
+                                    "type": "outer",
+                                    "cipher_suite": {
+                                        "aead_id": ech.cipher_suite.aead_id.to_string(),
+                                        "kdf_id": ech.cipher_suite.kdf_id.to_string(),
+                                    },
+                                    "config_id": ech.config_id,
+                                    "enc":  format!("0x{}", hex::encode(&ech.enc)),
+                                    "payload": format!("0x{}", hex::encode(&ech.payload)),
+                                },
+                            }),
+                            ECHClientHello::Inner => json!({
+                                "id": extension.id().to_string(),
+                                "data": {
+                                    "type": "inner",
+                                },
+                            })
+
+                        }
                         ClientHelloExtension::Opaque { id, data } => if data.is_empty() {
                             json!({
                                 "id": id.to_string()
@@ -453,23 +631,44 @@ impl Service<(), Request> for EchoService {
             });
 
         #[cfg(not(any(feature = "rustls", feature = "boring")))]
-        let tls_client_hello: Option<()> = None;
+        let tls_info: Option<()> = None;
+
+        let mut h2 = None;
+        if parts.version == Version::HTTP_2 {
+            let initial_peer_settings = parts
+                .extensions
+                .get::<InitialPeerSettings>()
+                .map(|p| p.0.as_ref());
+
+            let pseudo_headers = parts.extensions.get::<PseudoHeaderOrder>();
+
+            let last_priority_params = parts
+                .extensions
+                .get::<LastPeerPriorityParams>()
+                .map(|p| p.0.dependency.clone());
+
+            h2 = Some(json!({
+                "settings": initial_peer_settings,
+                "pseudo_headers": pseudo_headers,
+                "last_priority_params": last_priority_params,
+            }));
+        }
 
         Ok(Json(json!({
             "ua": user_agent_info,
             "http": {
-                "ja4h": ja4h,
                 "version": format!("{:?}", parts.version),
                 "scheme": scheme,
                 "method": format!("{:?}", parts.method),
                 "authority": authority,
                 "path": parts.uri.path().to_owned(),
                 "query": parts.uri.query().map(str::to_owned),
+                "h2": h2,
                 "headers": headers,
-                "pseudo_headers": pseudo_headers,
                 "payload": body,
+                "ja4h": ja4h,
             },
-            "tls": tls_client_hello,
+            "tls": tls_info,
             "socket_addr": ctx.get::<Forwarded>()
                 .and_then(|f|
                         f.client_socket_addr().map(|addr| addr.to_string())
