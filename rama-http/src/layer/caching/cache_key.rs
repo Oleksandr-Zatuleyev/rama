@@ -1,6 +1,6 @@
 use std::{borrow::Borrow, collections::BTreeMap, hash::Hash};
 
-use http::{request::Parts as ReqParts, response::Parts as ResParts, Uri};
+use rama_http_types::dep::http::{request::Parts as ReqParts, response::Parts as ResParts, Uri};
 
 /// TODO: docs
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -65,16 +65,16 @@ impl CacheKey {
 
     /// Gets the headers in the variance
     /// Returns None when no variance headers specified
-    pub fn get_variance_headers<'a>(&self) -> Option<impl Iterator<Item = &HeaderKey>> {
+    pub fn get_variance_headers(&self) -> Option<impl Iterator<Item = &HeaderKey>> {
         return Some(self.variance.as_ref()?.keys());
     }
 
     /// Returns variance header value, if present
     /// Will return None otherwise
-    pub fn get_variance_header_value<'a>(
-        &'a self,
+    pub fn get_variance_header_value(
+        &self,
         header_key: &HeaderKey,
-    ) -> Option<&'a VarianceHeaderValue> {
+    ) -> Option<&VarianceHeaderValue> {
         return self.variance.as_ref()?.get(header_key);
     }
 

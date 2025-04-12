@@ -152,7 +152,7 @@ where
     State: Clone + Send + Sync + 'static,
     ReqBody: Send + 'static,
     ResBody: Send + Sync + 'static,
-    NewResBody: Send + Sync + 'static,
+    NewResBody: Send + Sync + 'static,    
     F: Fn(ResBody) -> NewResBody + Clone + Send + Sync + 'static,
 {
     type Response = Response<NewResBody>;

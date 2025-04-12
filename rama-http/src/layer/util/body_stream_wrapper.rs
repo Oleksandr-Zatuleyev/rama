@@ -1,5 +1,6 @@
-use http_body::{Body, Frame};
+// use http_body::{Body, Frame};
 use pin_project_lite::pin_project;
+use rama_http_types::dep::http_body::{Body, Frame};
 
 pin_project! {
     pub(crate) struct BodySreamWrapper<InnerBody: Body> {

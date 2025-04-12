@@ -4,7 +4,7 @@ use std::{
     ops::Deref,
 };
 
-use http::Uri;
+use rama_http_types::dep::http::Uri;
 
 use crate::layer::caching::{cache_key::HeaderKey, CacheKey};
 
@@ -22,10 +22,10 @@ impl UriMap {
     pub(super) fn add_key(
         &mut self,
         uri: Cow<'_, Uri>,
-        key: CacheKey,
+        key: &CacheKey,
     ) -> Option<HashSet<CacheKey>> {
         let Some(mut existing) = self.items.get_mut(uri.deref()) else {
-            let map_item = UriMapItem::from_cache_key(key);
+            let map_item = UriMapItem::from_cache_key(key.clone());
 
             self.items.insert(uri.into_owned(), map_item);
 
@@ -52,11 +52,11 @@ impl UriMap {
         };
 
         if !has_variance_changed {
-            existing.keys.insert(key);
+            existing.keys.insert(key.clone());
             return None;
         }
 
-        let mut swap_map_item = UriMapItem::from_cache_key(key);
+        let mut swap_map_item = UriMapItem::from_cache_key(key.clone());
 
         std::mem::swap(&mut swap_map_item, &mut existing);
 

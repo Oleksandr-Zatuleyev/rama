@@ -1,6 +1,6 @@
 use std::time::{Duration, SystemTime};
 
-use http::response::Parts;
+use rama_http_types::{dep::http::response::Parts, headers::{CacheControl, Expires, Header}};
 use httpdate::HttpDate;
 
 pub(crate) fn get_expiration_time(
@@ -8,7 +8,32 @@ pub(crate) fn get_expiration_time(
     response_time: &SystemTime,
     response_parts: &Parts,
 ) -> Option<SystemTime> {
-    response_parts.cac
+    let mut cache_control_header_values = response_parts.headers.get_all("Cache-Control").iter();
+
+    if let Some(cache_control) = CacheControl::decode(&mut cache_control_header_values).ok() {
+        let max_age = cache_control.s_max_age().or(cache_control.max_age());
+
+        if let Some(s_maxage) = max_age {
+            let Some(age_at_response) = get_age_at(
+                &GetAgeParams::new(request_time.clone(), response_time.clone(), &response_parts),
+                response_time,
+            ) else {
+                return None;
+            };
+
+            if s_maxage < age_at_response {
+                return response_time.checked_sub(age_at_response - s_maxage);
+            }
+            return response_time.checked_add(s_maxage - age_at_response);
+        }
+    }
+
+    let mut expires_header_values = response_parts.headers.get_all("Expires").iter();
+    if let Some(expires) = Expires::decode(&mut expires_header_values).ok() {
+        return Some(expires.into());
+    }
+
+    return None;
 }
 
 // https://httpwg.org/specs/rfc9111.html#rfc.section.4.2.3

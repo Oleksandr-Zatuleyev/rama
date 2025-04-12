@@ -8,8 +8,8 @@ use std::{
 };
 
 use bytes::Bytes;
-use http_body::{Body, Frame, SizeHint};
 use pin_project_lite::pin_project;
+use rama_http_types::dep::http_body::{Body, Frame, SizeHint};
 
 use rama_core::error::BoxError;
 
@@ -42,7 +42,7 @@ pub(crate) fn intercept_body<InnerBody: Body<Error: Into<BoxError>>>(
         source,
         InterceptingBodyHandle {
             state: Arc::clone(&intercepting_body.handle.state),
-        }
+        },
     );
 
     return InterceptBodyResult {
@@ -69,14 +69,11 @@ pin_project! {
 }
 
 impl<Inner: Body<Error: Into<BoxError>>> InterceptedBody<Inner> {
-    fn new(
-        inner: Inner,
-        handle: InterceptingBodyHandle
-    ) -> Self {
+    fn new(inner: Inner, handle: InterceptingBodyHandle) -> Self {
         return InterceptedBody {
             inner,
             handle,
-            is_interception_failed: false
+            is_interception_failed: false,
         };
     }
 }
@@ -89,7 +86,7 @@ impl<Inner: Body<Error: Into<BoxError>>> Body for InterceptedBody<Inner> {
     fn poll_frame(
         mut self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+    ) -> std::task::Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         let this = self.as_mut().project();
 
         let size_hint = this.inner.size_hint();
@@ -141,7 +138,7 @@ impl<Inner: Body<Error: Into<BoxError>>> Body for InterceptedBody<Inner> {
 
 #[derive(Debug)]
 pub(crate) struct InterceptingBody {
-    handle: InterceptingBodyHandle
+    handle: InterceptingBodyHandle,
 }
 
 impl Body for InterceptingBody {
@@ -246,7 +243,8 @@ impl InterceptingBodyHandle {
         &self,
         cx: &mut std::task::Context<'_>,
     ) -> Poll<Option<Result<Frame<Bytes>, BoxError>>> {
-        let mut state_guard: std::sync::MutexGuard<'_, InterceptingBodyState> = self.state.lock().unwrap();
+        let mut state_guard: std::sync::MutexGuard<'_, InterceptingBodyState> =
+            self.state.lock().unwrap();
         let state = state_guard.deref_mut();
 
         if let Some(frame) = state.frames.pop_front() {

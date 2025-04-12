@@ -3,8 +3,6 @@
 #[cfg(feature = "compression")]
 pub(crate) mod compression;
 
-pub(crate) mod content_encoding;
-
 pub(crate) mod multicast_body;
 
 pub(crate) mod try_clone_byte_frame;

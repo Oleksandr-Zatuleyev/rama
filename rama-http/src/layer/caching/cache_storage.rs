@@ -1,7 +1,7 @@
-use std::{borrow::Cow, future::Future};
+use std::{borrow::Cow, future::Future, time::SystemTime};
 
-use http::{request::Parts, Uri};
-use http_body::Body;
+use rama_http_types::dep::http::{request::Parts, Uri};
+use rama_http_types::dep::http_body::Body;
 use rama_core::error::BoxError;
 use rama_http_types::Response;
 
@@ -12,7 +12,10 @@ use super::cache_key::CacheKey;
 /// 2) store response by key
 /// 3) invalidate response by uri
 /// 4) invalidate resopnse by uri that does not meet some optional criteria: too old, does not match etag etc - ???
-/// TODO
+/// TODO:
+/// TODO: come up with a better contract for metadata
+/// TODO: is there a good reason to store multiple responses for the same key? if there is - need to modify the storage interface to be able to store
+/// multiple responses
 pub trait CacheStorage {
     /// TODO
     type CachedResponseBody: Body<Error: Into<BoxError>> + Send + 'static;
@@ -27,7 +30,7 @@ pub trait CacheStorage {
     fn get_response(
         &self,
         request_head: &Parts,
-    ) -> impl Future<Output = Result<Option<Response<Self::CachedResponseBody>>, BoxError>>
+    ) -> impl Future<Output = Result<Option<(Response<Self::CachedResponseBody>, Vec<(String, String)>)>, BoxError>>
            + Send
            + 'static;
 
@@ -35,9 +38,15 @@ pub trait CacheStorage {
     fn set_response<OriginalBody: Body + Send + 'static>(
         &self,
         key: Cow<'_, CacheKey>,
+        expiration: SystemTime,
+        // TODO: make some keys enum to preserve storage?
+        metadata: &[(&str, &str)],
         response: Response<OriginalBody>,
     ) -> impl Future<
         Output = Result<
+        // TODO: should it return the whole response or only the intercepted body in case of cache persist success?
+        // asking, because the cache must not persist some headers
+        // TODO: better design the return type with metadata
             Response<Self::InterceptedResponseBody<OriginalBody>>,
             (Response<OriginalBody>, BoxError),
         >,
@@ -48,7 +57,7 @@ pub trait CacheStorage {
         OriginalBody::Error: Into<BoxError>;
 
     /// TODO
-    fn invalidate_response(
+    fn invalidate_url(
         &self,
         uri: &Uri,
     ) -> impl Future<Output = Result<(), BoxError>> + Send + 'static;

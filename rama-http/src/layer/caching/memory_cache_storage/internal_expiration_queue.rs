@@ -1,11 +1,11 @@
-use std::time::Instant;
+use std::time::SystemTime;
 
 use keyed_priority_queue::KeyedPriorityQueue;
 
 use crate::layer::caching::CacheKey;
 
 pub(super) struct ExpirationQueue {
-    queue: KeyedPriorityQueue<CacheKey, Instant>,
+    queue: KeyedPriorityQueue<CacheKey, SystemTime>,
 }
 
 impl ExpirationQueue {
@@ -15,11 +15,11 @@ impl ExpirationQueue {
         };
     }
 
-    pub(super) fn set_expiration(&mut self, key: CacheKey, expiration: Instant) {
+    pub(super) fn set_expiration(&mut self, key: CacheKey, expiration: SystemTime) {
         self.queue.push(key, expiration);
     }
 
-    pub(super) fn get_expiration(&self, key: &CacheKey) -> Option<&Instant> {
+    pub(super) fn get_expiration(&self, key: &CacheKey) -> Option<&SystemTime> {
         return self.queue.get_priority(key);
     }
 
@@ -27,7 +27,7 @@ impl ExpirationQueue {
         self.queue.remove(key);
     }
 
-    pub(super) fn peek_first_to_expire(&self) -> Option<(&CacheKey, &Instant)> {
+    pub(super) fn peek_first_to_expire(&self) -> Option<(&CacheKey, &SystemTime)> {
         return self.queue.peek();
     }
 }

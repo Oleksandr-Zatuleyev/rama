@@ -1,32 +1,32 @@
 use std::task::Poll;
 
-use http_body::Body;
 use pin_project_lite::pin_project;
 use rama_core::error::BoxError;
+use rama_http_types::dep::http_body::{Body, Frame, SizeHint};
 
 use super::union_buf::UnionBuf;
 
-pub(crate) type UnionBody3<FirstBody, SecondBody, ThirdBody> =
-    UnionBody<FirstBody, UnionBody<SecondBody, ThirdBody>>;
+// pub(crate) type UnionBody3<FirstBody, SecondBody, ThirdBody> =
+//     UnionBody<FirstBody, UnionBody<SecondBody, ThirdBody>>;
 
-impl<
-        FirstBody: Body<Error: Into<BoxError>>,
-        SecondBody: Body<Error: Into<BoxError>>,
-        ThirdBody: Body<Error: Into<BoxError>>,
-    > UnionBody3<FirstBody, SecondBody, ThirdBody>
-{
-    pub fn first_of_3(first_body: FirstBody) -> UnionBody3<FirstBody, SecondBody, ThirdBody> {
-        return UnionBody::first(first_body);
-    }
+// impl<
+//         FirstBody: Body<Error: Into<BoxError>>,
+//         SecondBody: Body<Error: Into<BoxError>>,
+//         ThirdBody: Body<Error: Into<BoxError>>,
+//     > UnionBody3<FirstBody, SecondBody, ThirdBody>
+// {
+//     pub fn first_of_3(first_body: FirstBody) -> UnionBody3<FirstBody, SecondBody, ThirdBody> {
+//         return UnionBody::first(first_body);
+//     }
 
-    pub fn second_of_3(second_body: SecondBody) -> UnionBody3<FirstBody, SecondBody, ThirdBody> {
-        return UnionBody::second(UnionBody::first(second_body));
-    }
+//     pub fn second_of_3(second_body: SecondBody) -> UnionBody3<FirstBody, SecondBody, ThirdBody> {
+//         return UnionBody::second(UnionBody::first(second_body));
+//     }
 
-    pub fn third_of_3(third_body: ThirdBody) -> UnionBody3<FirstBody, SecondBody, ThirdBody> {
-        return UnionBody::second(UnionBody::second(third_body));
-    }
-}
+//     pub fn third_of_3(third_body: ThirdBody) -> UnionBody3<FirstBody, SecondBody, ThirdBody> {
+//         return UnionBody::second(UnionBody::second(third_body));
+//     }
+// }
 
 pin_project! {
     pub struct UnionBody<
@@ -71,7 +71,7 @@ impl<
     fn poll_frame(
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
-    ) -> Poll<Option<Result<http_body::Frame<Self::Data>, Self::Error>>> {
+    ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
         return match self.project().inner.project() {
             UnionBodyEnumProj::First { body } => match body.poll_frame(cx) {
                 Poll::Pending => Poll::Pending,
@@ -99,7 +99,7 @@ impl<
         };
     }
 
-    fn size_hint(&self) -> http_body::SizeHint {
+    fn size_hint(&self) -> SizeHint {
         return match &self.inner {
             UnionBodyEnum::First { body } => body.size_hint(),
             UnionBodyEnum::Second { body } => body.size_hint(),

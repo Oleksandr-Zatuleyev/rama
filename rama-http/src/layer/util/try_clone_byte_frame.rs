@@ -1,5 +1,5 @@
 use bytes::{Buf, Bytes};
-use http_body::Frame;
+use rama_http_types::dep::http_body::Frame;
 
 pub(crate) fn convert_buf_to_byte_frame(
     frame: Frame<impl Buf>,
