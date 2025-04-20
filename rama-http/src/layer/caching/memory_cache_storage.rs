@@ -54,6 +54,7 @@ struct MemoryCacheStorageInternal {
 }
 
 // TODO: we are cloning the version here - is it correct?
+// TODO: etag as trailer
 impl CacheStorage for MemoryCacheStorage {
     type CachedResponseBody = ByteBody;
 

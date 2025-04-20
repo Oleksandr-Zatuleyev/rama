@@ -57,6 +57,13 @@ impl<
             inner: UnionBodyEnum::Second { body: second_body },
         };
     }
+
+    pub fn into_variant(self) -> UnionBodyVariant<FirstResponseBody, SecondResponseBody> {
+        return match self.inner {
+            UnionBodyEnum::First { body } => UnionBodyVariant::First(body),
+            UnionBodyEnum::Second { body } => UnionBodyVariant::Second(body)
+        };
+    }
 }
 
 impl<
@@ -109,8 +116,13 @@ impl<
 
 pin_project! {
     #[project = UnionBodyEnumProj]
-    pub enum UnionBodyEnum<FirstResponseBody: Body<Error:Into<BoxError>>, SecondResponseBody: Body<Error:Into<BoxError>>> {
+    enum UnionBodyEnum<FirstResponseBody: Body<Error:Into<BoxError>>, SecondResponseBody: Body<Error:Into<BoxError>>> {
         First{#[pin] body: FirstResponseBody },
         Second{#[pin] body: SecondResponseBody },
     }
+}
+
+pub enum UnionBodyVariant<FirstResponseBody: Body<Error:Into<BoxError>>, SecondResponseBody: Body<Error:Into<BoxError>>> {
+    First(FirstResponseBody),
+    Second(SecondResponseBody)
 }

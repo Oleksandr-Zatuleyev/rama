@@ -1677,7 +1677,7 @@ version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4ee7893dab2e44ae5f9d0173f26ff4aa327c10b01b06a72b52dd9405b628640d"
 dependencies = [
- "indexmap 2.8.0",
+ "indexmap 2.9.0",
 ]
 
 [[package]]
@@ -2383,6 +2383,8 @@ dependencies = [
  "hex",
  "http",
  "itertools 0.14.0",
+ "keyed_priority_queue",
+ "lru",
  "matchit",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
@@ -2550,6 +2552,8 @@ dependencies = [
  "httpdate",
  "iri-string",
  "itertools 0.14.0",
+ "keyed_priority_queue",
+ "lru",
  "matchit",
  "mime",
  "mime_guess",

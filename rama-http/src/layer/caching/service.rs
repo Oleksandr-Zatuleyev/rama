@@ -1,17 +1,18 @@
-use std::any::Any;
 use std::str::FromStr;
 use std::{borrow::Cow, fmt::Debug, time::SystemTime};
 
 use bytes::Buf;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 use rama_core::{Context, Service, error::BoxError};
 use rama_http_types::dep::http::{self, Method, Request, Response, StatusCode, request, response};
 use rama_http_types::dep::http_body::Body;
 use rama_http_types::header::Entry;
-use rama_http_types::headers::{CacheControl, Header};
+use rama_http_types::headers::{
+    CacheControl, Date, ETag, Header, IfModifiedSince, IfNoneMatch, LastModified,
+};
 use rama_http_types::{HeaderMap, HeaderName, HeaderValue};
 
-use crate::layer::util::union_body::UnionBody;
+use crate::layer::util::union_body::{UnionBody, UnionBodyVariant};
 
 use super::byte_body::ByteBody;
 use super::caching_utils::{GetAgeParams, get_current_age};
@@ -47,7 +48,7 @@ static REQUEST_DATE_KEY: &str = "REQUEST_DATE";
 // Storage::CachedResponseBody,
 // Storage::InterceptedResponseBody<ResponseBody>,
 // >,
-type CacheResponseBody<OriginalResponseBody, CachedResponseBody, InterceptedResponseBody> =
+type CacheResponseBodyVariant<OriginalResponseBody, CachedResponseBody, InterceptedResponseBody> =
     UnionBody<
         UnionBody<OriginalResponseBody, CachedResponseBody>,
         UnionBody<InterceptedResponseBody, ByteBody>,
@@ -57,29 +58,33 @@ impl<
     OriginalResponseBody: Body<Error: Into<BoxError>>,
     CachedResponseBody: Body<Error: Into<BoxError>>,
     InterceptedResponseBody: Body<Error: Into<BoxError>>,
-> CacheResponseBody<OriginalResponseBody, CachedResponseBody, InterceptedResponseBody>
+> CacheResponseBodyVariant<OriginalResponseBody, CachedResponseBody, InterceptedResponseBody>
 {
     fn new_original_response(
         body: OriginalResponseBody,
-    ) -> CacheResponseBody<OriginalResponseBody, CachedResponseBody, InterceptedResponseBody> {
+    ) -> CacheResponseBodyVariant<OriginalResponseBody, CachedResponseBody, InterceptedResponseBody>
+    {
         return UnionBody::first(UnionBody::first(body));
     }
 
     fn new_cached_response(
         body: CachedResponseBody,
-    ) -> CacheResponseBody<OriginalResponseBody, CachedResponseBody, InterceptedResponseBody> {
+    ) -> CacheResponseBodyVariant<OriginalResponseBody, CachedResponseBody, InterceptedResponseBody>
+    {
         return UnionBody::first(UnionBody::second(body));
     }
 
     fn new_intercepted_response(
         body: InterceptedResponseBody,
-    ) -> CacheResponseBody<OriginalResponseBody, CachedResponseBody, InterceptedResponseBody> {
+    ) -> CacheResponseBodyVariant<OriginalResponseBody, CachedResponseBody, InterceptedResponseBody>
+    {
         return UnionBody::second(UnionBody::first(body));
     }
 
     fn new_byte_response(
         body: ByteBody,
-    ) -> CacheResponseBody<OriginalResponseBody, CachedResponseBody, InterceptedResponseBody> {
+    ) -> CacheResponseBodyVariant<OriginalResponseBody, CachedResponseBody, InterceptedResponseBody>
+    {
         return UnionBody::second(UnionBody::second(body));
     }
 }
@@ -122,8 +127,8 @@ Rules
     (this requirement is not in the standard, and according to https://httpwg.org/specs/rfc9110.html#precedence, it looks like
     caches should disregard these headers at all!)
 
-    if-none-match, if-modified-since - if a request is received with one of these - implement logic to validate locally,
-        if no stored responses match - pass through, and handle the response
+    if-none-match, if-modified-since - if a request is received with one of these - implement logic to validate locally, - done
+        if no stored responses match - pass through, and handle the response - done
 
         freshening stored responses after validation (validation that was initiated downstream)
 
@@ -135,7 +140,7 @@ Rules
 
     authorization header hashing/salting
 
-    for the time being, if anny of cache-significant headers are in trailers - do not cache
+    for the time being, if any of cache-significant headers are in trailers - do not cache
 
     check precedence or preconditions:
         https://httpwg.org/specs/rfc9110.html#precedence
@@ -197,7 +202,7 @@ where
         &self,
         head: &http::request::Parts,
         req_cache_control: Option<&CacheControl>,
-    ) -> Option<Response<<Storage as CacheStorage>::CachedResponseBody>>
+    ) -> Option<Response<UnionBody<<Storage as CacheStorage>::CachedResponseBody, ByteBody>>>
     where
         InnerService: Service<S, Request<RequestBody>, Response = Response<ResponseBody>>,
         RequestBody: Body + Send + 'static,
@@ -216,22 +221,26 @@ where
 
         let (mut res_head, res_body) = response.0.into_parts();
 
-        if head.headers.contains_key("If-None-Match") {
-            let stored_etag = res_head
-                .headers
-                .get("ETag")
-                .map(|etag_value| etag_value.to_str().ok())
-                .flatten()?;
+        // TODO: check staleness before checking preconditions
 
-            
-            let if_none_match_keys: Vec<_> = head.headers.get_all("If-None-Match").iter().collect();
-        }
+        match handle_preconditions(head, &res_head, &response.1) {
+            PreconditionHandleResult::Passed
+            | PreconditionHandleResult::Invalid
+            | PreconditionHandleResult::NotPresent => {}
+            PreconditionHandleResult::NotPassed(res) => {
+                let (head, body) = res.into_parts();
+                return Some(Response::from_parts(head, UnionBody::second(body)));
+            }
+            PreconditionHandleResult::InternalError => {
+                return None;
+            }
+        };
 
         let new_age_header = get_current_response_age(&response.1, &res_head)?;
         res_head.headers.remove("Age");
         res_head.headers.append("Age", new_age_header);
 
-        return Some(Response::from_parts(res_head, res_body));
+        return Some(Response::from_parts(res_head, UnionBody::first(res_body)));
     }
 
     async fn store_in_cache<ResponseBody, RequestBody, S>(
@@ -401,7 +410,7 @@ where
     S: Send + Sync + 'static,
 {
     type Response = Response<
-        CacheResponseBody<
+        CacheResponseBodyVariant<
             ResponseBody,
             Storage::CachedResponseBody,
             Storage::InterceptedResponseBody<ResponseBody>,
@@ -430,7 +439,14 @@ where
 
                 return Ok(Response::from_parts(
                     cached_head,
-                    CacheResponseBody::new_cached_response(cached_body),
+                    match cached_body.into_variant() {
+                        UnionBodyVariant::First(cached_response_body) => {
+                            CacheResponseBodyVariant::new_cached_response(cached_response_body)
+                        }
+                        UnionBodyVariant::Second(byte_body) => {
+                            CacheResponseBodyVariant::new_byte_response(byte_body)
+                        }
+                    },
                 ));
             }
 
@@ -463,13 +479,13 @@ where
 
                     return Ok(Response::from_parts(
                         intercpeted_head,
-                        CacheResponseBody::new_intercepted_response(intercepted_body),
+                        CacheResponseBodyVariant::new_intercepted_response(intercepted_body),
                     ));
                 }
                 Err((_, res_head, res_body)) => {
                     return Ok(Response::from_parts(
                         res_head,
-                        CacheResponseBody::new_original_response(res_body),
+                        CacheResponseBodyVariant::new_original_response(res_body),
                     ));
                 }
             }
@@ -539,7 +555,103 @@ fn get_current_response_age(
     Some(new_age_header)
 }
 
-pub fn generate_304_response(parts: response::Parts) -> Response<ByteBody> {
+fn handle_preconditions(
+    req_head: &request::Parts,
+    cached_res_head: &response::Parts,
+    cache_res_metadata: &Vec<(String, String)>,
+) -> PreconditionHandleResult {
+    if req_head.headers.contains_key("If-None-Match") {
+        return handle_if_none_match_req(req_head, cached_res_head);
+    } else if (req_head.method == Method::GET || req_head.method == Method::HEAD)
+        && req_head.headers.get_all("If-Modified-Since").iter().count() == 1
+    {
+        return handle_if_modified_since_req(req_head, cached_res_head, cache_res_metadata);
+    }
+
+    return PreconditionHandleResult::NotPresent;
+}
+
+fn handle_if_none_match_req(
+    req_head: &request::Parts,
+    cached_res_head: &response::Parts,
+) -> PreconditionHandleResult {
+    let Ok(stored_etag) = ETag::decode(&mut cached_res_head.headers.get_all("ETag").iter()) else {
+        return PreconditionHandleResult::Invalid;
+    };
+
+    let Ok(req_if_none_match) =
+        IfNoneMatch::decode(&mut req_head.headers.get_all("If-None-Match").iter())
+    else {
+        return PreconditionHandleResult::Invalid;
+    };
+
+    if req_if_none_match.precondition_passes(&stored_etag) {
+        return PreconditionHandleResult::Passed;
+    }
+
+    let Some(generated_304_response) = generate_304_response(cached_res_head) else {
+        return PreconditionHandleResult::InternalError;
+    };
+
+    return PreconditionHandleResult::NotPassed(generated_304_response);
+}
+
+fn handle_if_modified_since_req(
+    req_head: &request::Parts,
+    cached_res_head: &response::Parts,
+    cache_res_metadata: &Vec<(String, String)>,
+) -> PreconditionHandleResult {
+    let Some(cache_res_last_modified) =
+        get_cache_res_last_modified(cached_res_head, cache_res_metadata)
+    else {
+        return PreconditionHandleResult::InternalError;
+    };
+
+    let Ok(req_if_modified_since) =
+        IfModifiedSince::decode(&mut req_head.headers.get_all("If-Modified-Since").iter())
+    else {
+        return PreconditionHandleResult::Invalid;
+    };
+
+    if SystemTime::from(req_if_modified_since) < cache_res_last_modified {
+        return PreconditionHandleResult::Passed;
+    }
+
+    let Some(generated_304_response) = generate_304_response(cached_res_head) else {
+        return PreconditionHandleResult::InternalError;
+    };
+
+    return PreconditionHandleResult::NotPassed(generated_304_response);
+
+    fn get_cache_res_last_modified(
+        cached_res_head: &response::Parts,
+        cache_res_metadata: &Vec<(String, String)>,
+    ) -> Option<SystemTime> {
+        if let Ok(last_modified) =
+            LastModified::decode(&mut cached_res_head.headers.get_all(LastModified::name()).iter())
+        {
+            return Some(last_modified.into());
+        }
+
+        if let Ok(date) = Date::decode(&mut cached_res_head.headers.get_all(Date::name()).iter()) {
+            return Some(date.into());
+        }
+
+        if let Some(response_date) = cache_res_metadata
+            .iter()
+            .find(|t| t.0 == RESPONSE_DATE_KEY)
+            .map(|res_date_str| DateTime::<FixedOffset>::parse_from_rfc3339(&res_date_str.1).ok())
+            .flatten()
+            .map(|res_date_time| SystemTime::from(res_date_time))
+        {
+            return Some(response_date);
+        }
+
+        return None;
+    }
+}
+
+fn generate_304_response(parts: &response::Parts) -> Option<Response<ByteBody>> {
     let mut response_builder = response::Builder::new().status(304).version(parts.version);
 
     for &header_name in NOT_MODIFIED_RESPONSE_HEADERS {
@@ -549,6 +661,14 @@ pub fn generate_304_response(parts: response::Parts) -> Response<ByteBody> {
     }
 
     return response_builder
-        .body(ByteBody::from_byte_vec(&Vec::new()).unwrap())
-        .unwrap();
+        .body(ByteBody::from_byte_vec(&Vec::new())?)
+        .ok();
+}
+
+enum PreconditionHandleResult {
+    NotPresent,
+    Passed,
+    NotPassed(Response<ByteBody>),
+    Invalid,
+    InternalError,
 }
