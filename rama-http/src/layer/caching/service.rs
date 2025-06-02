@@ -18,7 +18,7 @@ use crate::layer::util::union_body::{UnionBody, UnionBodyVariant};
 
 use super::byte_body::ByteBody;
 use super::caching_utils::update_age_and_date_to_latest;
-use super::{CacheRef, CacheStorage2, ExistingCacheRef, NewCacheRef};
+use super::{CacheRef, CacheStorage, ExistingCacheRef, NewCacheRef};
 use super::{cache_key::CacheKey, caching_utils::get_expiration_time};
 use rama_utils::macros::error::static_str_error;
 
@@ -188,7 +188,7 @@ Later:
 #[derive(Debug)]
 pub struct CachingService<InnerService, Storage>
 where
-    Storage: CacheStorage2 + Send + Sync + 'static,
+    Storage: CacheStorage + Send + Sync + 'static,
 {
     inner: InnerService,
     storage: Storage,
@@ -196,12 +196,12 @@ where
 
 impl<InnerService, Storage> CachingService<InnerService, Storage>
 where
-    Storage: CacheStorage2 + Send + Sync + 'static,
+    Storage: CacheStorage + Send + Sync + 'static,
 {
     /// Creates a new caching service
     pub fn new(inner: InnerService, storage: Storage) -> CachingService<InnerService, Storage>
     where
-        Storage: CacheStorage2 + Send + Sync + 'static,
+        Storage: CacheStorage + Send + Sync + 'static,
     {
         return CachingService { inner, storage };
     }
@@ -210,7 +210,7 @@ where
         &self,
         head: &http::request::Parts,
         req_cache_control: Option<&CacheControl>,
-    ) -> Option<Response<UnionBody<<Storage as CacheStorage2>::CachedResponseBody, ByteBody>>>
+    ) -> Option<Response<UnionBody<<Storage as CacheStorage>::CachedResponseBody, ByteBody>>>
     where
         InnerService: Service<S, Request<RequestBody>, Response = Response<ResponseBody>>,
         RequestBody: Body + Send + 'static,
@@ -270,7 +270,7 @@ where
         req_cache_control: Option<&CacheControl>,
         res_cache_control: Option<&CacheControl>,
     ) -> Result<
-        Response<<Storage as CacheStorage2>::InterceptedResponseBody<ResponseBody>>,
+        Response<<Storage as CacheStorage>::InterceptedResponseBody<ResponseBody>>,
         (http::request::Parts, http::response::Parts, ResponseBody),
     >
     where
@@ -520,7 +520,7 @@ where
     RequestBody: Body + Send + 'static,
     ResponseBody:
         Body<Data: Buf + Clone + Send + Sync + 'static, Error: Into<BoxError>> + Send + 'static,
-    Storage: CacheStorage2 + Send + Sync + 'static,
+    Storage: CacheStorage + Send + Sync + 'static,
     S: Send + Sync + 'static,
 {
     type Response = Response<

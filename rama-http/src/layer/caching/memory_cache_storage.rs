@@ -16,21 +16,21 @@ use rama_http_types::HeaderMap;
 use crate::layer::util::intercept_body::InterceptedBody;
 
 use super::byte_body::ByteBody;
-use super::{CacheKey, CacheStorage2};
+use super::{CacheKey, CacheStorage};
 
-pub struct MemoryCacheStorage2 {
+pub struct MemoryCacheStorage {
     repository: Arc<MemoryCacheStorageRepository>,
 }
 
-impl MemoryCacheStorage2 {
-    pub fn new(max_size: usize) -> MemoryCacheStorage2 {
-        return MemoryCacheStorage2 {
+impl MemoryCacheStorage {
+    pub fn new(max_size: usize) -> MemoryCacheStorage {
+        return MemoryCacheStorage {
             repository: MemoryCacheStorageRepository::new(max_size),
         };
     }
 }
 
-impl CacheStorage2 for MemoryCacheStorage2 {
+impl CacheStorage for MemoryCacheStorage {
     type NewItem<
         InnerBody: rama_http_types::dep::http_body::Body<Error: Into<rama_core::error::BoxError>>
             + Send

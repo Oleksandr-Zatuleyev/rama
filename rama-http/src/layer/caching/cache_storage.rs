@@ -7,7 +7,7 @@ use rama_http_types::{
 
 use super::CacheKey;
 
-pub trait CacheStorage2 {
+pub trait CacheStorage {
     type NewItem<InnerBody: Body<Error: Into<BoxError>> + Send + 'static>: NewCacheRef<
         InterceptedResponseBody<InnerBody> = Self::InterceptedResponseBody<InnerBody>,
     >;
