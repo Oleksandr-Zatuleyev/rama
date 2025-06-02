@@ -17,7 +17,7 @@ use rama_http_types::{HeaderMap, HeaderName, HeaderValue, Version};
 use crate::layer::util::union_body::{UnionBody, UnionBodyVariant};
 
 use super::byte_body::ByteBody;
-use super::caching_utils::{GetAgeParams, get_current_age, update_age_and_date_to_latest};
+use super::caching_utils::update_age_and_date_to_latest;
 use super::{CacheRef, CacheStorage2, ExistingCacheRef, NewCacheRef};
 use super::{cache_key::CacheKey, caching_utils::get_expiration_time};
 use rama_utils::macros::error::static_str_error;
@@ -637,34 +637,6 @@ fn strip_connection_header(headers: &mut HeaderMap<HeaderValue>) {
         return;
     };
     entry.remove_entry();
-}
-
-// TODO: proper errors
-fn get_current_response_age(
-    cache_item: &impl ExistingCacheRef,
-    res_headers: &HeaderMap,
-) -> Option<HeaderValue> {
-    let Some(Ok(request_date)) = cache_item
-        .get_metadata(REQUEST_DATE_KEY)
-        .map(|t| DateTime::<Utc>::from_str(t))
-    else {
-        return None;
-    };
-    let Some(Ok(response_date)) = cache_item
-        .get_metadata(RESPONSE_DATE_KEY)
-        .map(|t| DateTime::<Utc>::from_str(t))
-    else {
-        return None;
-    };
-    let current_age = get_current_age(&GetAgeParams::new(
-        request_date.into(),
-        response_date.into(),
-        res_headers,
-    ))?;
-    let Ok(new_age_header) = HeaderValue::from_str(&current_age.as_secs().to_string()) else {
-        return None;
-    };
-    Some(new_age_header)
 }
 
 fn handle_preconditions(

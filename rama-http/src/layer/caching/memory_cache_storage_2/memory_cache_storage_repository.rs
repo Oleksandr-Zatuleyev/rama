@@ -194,7 +194,8 @@ impl MemoryCacheStorageRepository {
 
             expiration_management
                 .send(message)
-                .await;
+                .await
+                .ok();
         }
     }
 

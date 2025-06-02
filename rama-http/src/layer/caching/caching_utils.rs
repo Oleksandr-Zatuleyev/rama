@@ -42,10 +42,6 @@ pub(crate) fn get_expiration_time(
 }
 
 // https://httpwg.org/specs/rfc9111.html#rfc.section.4.2.3
-pub(crate) fn get_current_age(params: &GetAgeParams) -> Option<Duration> {
-    return get_age_at(params, &SystemTime::now());
-}
-
 pub(crate) fn get_age_at(params: &GetAgeParams, system_time: &SystemTime) -> Option<Duration> {
     let corrected_initial_age = std::cmp::max(
         get_apparent_age(params).unwrap_or(Duration::ZERO),
