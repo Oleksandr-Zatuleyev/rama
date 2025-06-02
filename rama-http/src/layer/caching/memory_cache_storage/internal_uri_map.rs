@@ -6,7 +6,7 @@ use std::{
 
 use rama_http_types::dep::http::Uri;
 
-use crate::layer::caching::{cache_key::HeaderKey, CacheKey};
+use crate::layer::caching::{CacheKey, cache_key::HeaderKey};
 
 pub(super) struct UriMap {
     items: HashMap<Uri, UriMapItem>,
@@ -33,8 +33,8 @@ impl UriMap {
         };
 
         let has_variance_changed = match (&existing.variance, key.get_variance_headers()) {
-            (None, None) => false,
-            (Some(existing_variance), Some(new_variance_headers)) => {
+            (None, _) => false,
+            (Some(existing_variance), new_variance_headers) => {
                 let mut new_header_count = 0;
                 let mut all_new_headers_found = true;
 
@@ -96,9 +96,11 @@ struct UriMapItem {
 impl UriMapItem {
     fn from_cache_key(key: CacheKey) -> UriMapItem {
         let mut map_item = UriMapItem {
-            variance: key
-                .get_variance_headers()
-                .map(|headers| headers.map(|header| header.clone()).collect()),
+            variance: Some(
+                key.get_variance_headers()
+                    .map(|header| header.clone())
+                    .collect(),
+            ),
             keys: HashSet::new(),
         };
         map_item.keys.insert(key);

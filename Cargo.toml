@@ -46,6 +46,7 @@ bytes = "1"
 clap = { version = "4.5.35", features = ["derive"] }
 crossterm = "0.29"
 csv = "1.3.1"
+dashmap = "6.1.0"
 flate2 = "1.1"
 futures-lite = "2.6.0"
 futures-core = "0.3"
@@ -77,6 +78,7 @@ rustls-pki-types = "^1"
 proc-macro2 = "1.0"
 psl = "2"
 socket2 = "0.5.9"
+TinyUFO = "0.4.0"
 opentelemetry = { version = "0.29.1", default-features = false, features = [
     "trace",
 ] }
@@ -278,6 +280,8 @@ serde_html_form = { workspace = true, optional = true }
 serde_json = { workspace = true, optional = true }
 tokio = { workspace = true, features = ["macros", "io-std"], optional = true }
 tracing = { workspace = true, optional = true }
+TinyUFO = { workspace = true, optional = true }
+dashmap = { workspace = true, optional = true }
 
 [dev-dependencies]
 bytes = { workspace = true }

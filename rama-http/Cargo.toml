@@ -32,10 +32,12 @@ bitflags = { workspace = true }
 bytes = { workspace = true }
 const_format = { workspace = true }
 csv = { workspace = true }
+dashmap = { workspace = true }
 futures-lite = { workspace = true }
 http-range-header = { workspace = true }
 httpdate = { workspace = true }
 iri-string = { workspace = true }
+itertools = { workspace = true }
 keyed_priority_queue = { workspace = true }
 lru = { workspace = true }
 matchit = { workspace = true }
@@ -55,6 +57,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_html_form = { workspace = true }
 serde_json = { workspace = true }
 smol_str = { workspace = true }
+TinyUFO = { workspace = true }
 tokio = { workspace = true, features = ["macros", "fs", "io-std"] }
 tokio-stream = { workspace = true }
 tokio-util = { workspace = true, features = ["io"] }
@@ -65,7 +68,6 @@ chrono = { workspace = true }
 [dev-dependencies]
 brotli = { workspace = true }
 flate2 = { workspace = true }
-itertools = { workspace = true }
 parking_lot = { workspace = true }
 rama-http-backend = { version = "0.2.0-alpha.9", path = "../rama-http-backend" }
 rama-tcp = { version = "0.2.0-alpha.9", path = "../rama-tcp" }

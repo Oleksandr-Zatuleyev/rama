@@ -1,6 +1,9 @@
 use std::{borrow::Borrow, collections::BTreeMap, hash::Hash};
 
-use rama_http_types::dep::http::{request::Parts as ReqParts, response::Parts as ResParts, Uri};
+use rama_http_types::{
+    HeaderMap,
+    dep::http::{Uri, request::Parts as ReqParts, response::Parts as ResParts},
+};
 
 /// TODO: docs
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -8,6 +11,7 @@ pub struct CacheKey {
     uri: Uri,
     authorization: Option<Vec<u8>>,
     // BTreeMap is needed for stable hashcode
+    // for comparison and hashcode purposes, BTreeMap cannot be empty - it must be None instead
     variance: Option<BTreeMap<HeaderKey, VarianceHeaderValue>>,
 }
 
@@ -32,41 +36,48 @@ impl CacheKey {
 
         return Some(CacheKey {
             uri: req_head.uri.clone(),
-            authorization: CacheKey::get_req_authorization(req_head),
+            authorization: CacheKey::get_req_authorization(&req_head.headers),
             variance: CacheKey::get_req_res_variance(req_head, res_head),
         });
+    }
+
+    pub fn from_req_uri_headers_variance<Variance: Iterator<Item: Into<HeaderKey>>>(
+        uri: &Uri,
+        req_headers: &HeaderMap,
+        variance: Option<Variance>,
+    ) -> CacheKey {
+        return CacheKey {
+            uri: uri.clone(),
+            authorization: Self::get_req_authorization(req_headers),
+            variance: variance
+                .map(|v| Self::get_req_variance_headers(&req_headers, v))
+                .flatten(),
+        };
     }
 
     pub fn from_req_variance<Variance>(req_head: &ReqParts, variance: Option<Variance>) -> CacheKey
     where
         Variance: Iterator<Item: Into<HeaderKey>>,
     {
-        return CacheKey {
-            uri: req_head.uri.clone(),
-            authorization: Self::get_req_authorization(req_head),
-            variance: variance
-                .map(|v| Self::get_req_variance_headers(req_head, v))
-                .flatten(),
-        };
+        return Self::from_req_uri_headers_variance(&req_head.uri, &req_head.headers, variance);
     }
 
-    pub fn from_req(req_head: &ReqParts) -> CacheKey {
-        return CacheKey {
-            uri: req_head.uri.clone(),
-            authorization: CacheKey::get_req_authorization(req_head),
-            variance: None,
-        };
-    }
+    // pub fn from_req(req_head: &ReqParts) -> CacheKey {
+    //     return CacheKey {
+    //         uri: req_head.uri.clone(),
+    //         authorization: CacheKey::get_req_authorization(req_head),
+    //         variance: None,
+    //     };
+    // }
 
     /// Gets the uri
     pub fn get_uri(&self) -> &Uri {
         return &self.uri;
     }
 
-    /// Gets the headers in the variance
-    /// Returns None when no variance headers specified
-    pub fn get_variance_headers(&self) -> Option<impl Iterator<Item = &HeaderKey>> {
-        return Some(self.variance.as_ref()?.keys());
+    /// Gets the sorted headers in the variance
+    pub fn get_variance_headers(&self) -> impl Iterator<Item = &HeaderKey> {
+        return self.variance.iter().flat_map(|variance_headers| variance_headers.keys());
     }
 
     /// Returns variance header value, if present
@@ -83,10 +94,9 @@ impl CacheKey {
         return self.authorization.as_deref();
     }
 
-    fn get_req_authorization(req_head: &ReqParts) -> Option<Vec<u8>> {
+    fn get_req_authorization(req_headers: &HeaderMap) -> Option<Vec<u8>> {
         // TODO: store hash instead of the full Authorization value?
-        return req_head
-            .headers
+        return req_headers
             .get("Authorization")
             .map(|auth| auth.as_bytes().to_owned());
     }
@@ -154,11 +164,11 @@ impl CacheKey {
             .filter_map(|vary_header| vary_header.to_str().ok())
             .map(|header_str| header_str.to_owned());
 
-        return Self::get_req_variance_headers(req_head, variance_headers);
+        return Self::get_req_variance_headers(&req_head.headers, variance_headers);
     }
 
     fn get_req_variance_headers<VarianceHeaders>(
-        req_head: &ReqParts,
+        req_headers: &HeaderMap,
         variance_headers: VarianceHeaders,
     ) -> Option<BTreeMap<HeaderKey, VarianceHeaderValue>>
     where
@@ -174,7 +184,7 @@ impl CacheKey {
             }
 
             let header_key_str: &str = header_key.borrow();
-            let vary_values = req_head.headers.get_all(header_key_str);
+            let vary_values = req_headers.get_all(header_key_str);
 
             let mut variance_value: Option<VarianceHeaderValue> = None;
 

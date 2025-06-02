@@ -1,21 +1,26 @@
-use std::time::{Duration, SystemTime};
-
-use rama_http_types::{dep::http::response::Parts, headers::{CacheControl, Expires, Header}};
 use httpdate::HttpDate;
+use rama_http_types::{
+    headers::{Age, CacheControl, Date, Expires, Header}, HeaderMap
+};
+use std::time::{Duration, SystemTime};
 
 pub(crate) fn get_expiration_time(
     request_time: &SystemTime,
     response_time: &SystemTime,
-    response_parts: &Parts,
+    response_headers: &HeaderMap,
 ) -> Option<SystemTime> {
-    let mut cache_control_header_values = response_parts.headers.get_all("Cache-Control").iter();
+    let mut cache_control_header_values = response_headers.get_all("Cache-Control").iter();
 
     if let Some(cache_control) = CacheControl::decode(&mut cache_control_header_values).ok() {
         let max_age = cache_control.s_max_age().or(cache_control.max_age());
 
         if let Some(s_maxage) = max_age {
             let Some(age_at_response) = get_age_at(
-                &GetAgeParams::new(request_time.clone(), response_time.clone(), &response_parts),
+                &GetAgeParams::new(
+                    request_time.clone(),
+                    response_time.clone(),
+                    &response_headers,
+                ),
                 response_time,
             ) else {
                 return None;
@@ -28,7 +33,7 @@ pub(crate) fn get_expiration_time(
         }
     }
 
-    let mut expires_header_values = response_parts.headers.get_all("Expires").iter();
+    let mut expires_header_values = response_headers.get_all("Expires").iter();
     if let Some(expires) = Expires::decode(&mut expires_header_values).ok() {
         return Some(expires.into());
     }
@@ -79,6 +84,39 @@ fn get_corrected_age_value(params: &GetAgeParams) -> Option<Duration> {
     );
 }
 
+pub(crate) fn update_age_and_date_to_latest(
+    request_time: SystemTime,
+    response_time: SystemTime,
+    response_headers: &mut HeaderMap,
+) -> Result<(), ()> {
+    let get_age_params = GetAgeParams::new(request_time, response_time, response_headers);
+
+    let new_date = SystemTime::now();
+    let Some(new_age) = get_age_at(&get_age_params, &new_date) else {
+        return Err(());
+    };
+    
+    let mut tmp_headers = Vec::new();
+
+    Date::from(new_date).encode(&mut tmp_headers);    
+    let Some(new_date_header) = tmp_headers.pop() else {
+        return Err(())
+    };
+
+    Age::from(new_age).encode(&mut tmp_headers);
+    let Some(new_age_header) = tmp_headers.pop() else {
+        return Err(())
+    };
+    
+    response_headers.remove(Date::name());
+    response_headers.remove(Age::name());
+
+    response_headers.append(Date::name(), new_date_header);
+    response_headers.append(Age::name(), new_age_header);
+
+    return Ok(());
+}
+
 pub(crate) struct GetAgeParams {
     request_time: SystemTime,
     response_time: SystemTime,
@@ -90,18 +128,18 @@ impl GetAgeParams {
     pub(crate) fn new(
         request_time: SystemTime,
         response_time: SystemTime,
-        response_parts: &Parts,
+        response_headers: &HeaderMap,
     ) -> GetAgeParams {
         return GetAgeParams {
             request_time,
             response_time,
-            response_header_age: Self::get_response_header_age(response_parts),
-            response_header_date: Self::get_response_header_date(response_parts),
+            response_header_age: Self::get_response_header_age(response_headers),
+            response_header_date: Self::get_response_header_date(response_headers),
         };
     }
 
-    fn get_response_header_age(response_parts: &Parts) -> Option<Duration> {
-        return match response_parts.headers.get("Age") {
+    fn get_response_header_age(response_headers: &HeaderMap) -> Option<Duration> {
+        return match response_headers.get("Age") {
             Some(age_header_value) => match age_header_value.to_str() {
                 Ok(age_str) => match age_str.parse::<u32>() {
                     Ok(age) => Some(Duration::from_secs(age.into())),
@@ -116,9 +154,8 @@ impl GetAgeParams {
         };
     }
 
-    fn get_response_header_date(response_parts: &Parts) -> Option<SystemTime> {
-        let http_date: HttpDate = response_parts
-            .headers
+    fn get_response_header_date(response_headers: &HeaderMap) -> Option<SystemTime> {
+        let http_date: HttpDate = response_headers
             .get("Date")
             .and_then(|date_header_value| date_header_value.to_str().ok())
             .and_then(|date_header_str| date_header_str.parse().ok())?;

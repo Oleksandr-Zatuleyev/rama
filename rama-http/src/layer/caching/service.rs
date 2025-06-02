@@ -1,23 +1,30 @@
 use std::str::FromStr;
+use std::usize;
 use std::{borrow::Cow, fmt::Debug, time::SystemTime};
 
 use bytes::Buf;
 use chrono::{DateTime, FixedOffset, Utc};
+use itertools::Itertools;
 use rama_core::{Context, Service, error::BoxError};
 use rama_http_types::dep::http::{self, Method, Request, Response, StatusCode, request, response};
 use rama_http_types::dep::http_body::Body;
 use rama_http_types::header::Entry;
 use rama_http_types::headers::{
-    CacheControl, Date, ETag, Header, IfModifiedSince, IfNoneMatch, LastModified,
+    CacheControl, ContentLength, Date, ETag, Header, IfModifiedSince, IfNoneMatch, LastModified,
 };
-use rama_http_types::{HeaderMap, HeaderName, HeaderValue};
+use rama_http_types::{HeaderMap, HeaderName, HeaderValue, Version};
 
 use crate::layer::util::union_body::{UnionBody, UnionBodyVariant};
 
 use super::byte_body::ByteBody;
-use super::caching_utils::{GetAgeParams, get_current_age};
-use super::{CacheStorage, cache_key::CacheKey, caching_utils::get_expiration_time};
+use super::caching_utils::{GetAgeParams, get_current_age, update_age_and_date_to_latest};
+use super::{CacheRef, CacheStorage2, ExistingCacheRef, NewCacheRef};
+use super::{cache_key::CacheKey, caching_utils::get_expiration_time};
+use rama_utils::macros::error::static_str_error;
 
+// TODO: use headers lib constant names instead of hardcoding them everywhere
+// TODO: replace all the "ok()" with actual logging!
+// TODO: for MVP, refuse to cache responses where trailers contain any of the headers that determine caching behavior
 static NON_STORED_HEADERS: &[&str] = &[
     "Connection",
     "Proxy-Connection",
@@ -152,7 +159,7 @@ Later:
     if no-cache - then maybe keep, but consider stale and impl revalidation (but be careful - it can have arguments that prevents storage all caches)
     if private - it might allow to store something?
     how to sync cache state (invalidation, staleness) across nodes?
-    how to sync cache state (invalidation, staleness) for the responses that are still being loaded?
+    how to sync cache state (invalidation, staleness) for the responses that are still being loaded? (request collapsing)
     partial content
     cache extensions
     heuristic staleness?
@@ -175,12 +182,13 @@ Later:
  */
 
 // TODO: check that headers are handled as case-insensitive as expected
+// TODO: what to do with extensions?
 
 /// TODO
 #[derive(Debug)]
 pub struct CachingService<InnerService, Storage>
 where
-    Storage: CacheStorage + Send + Sync + 'static,
+    Storage: CacheStorage2 + Send + Sync + 'static,
 {
     inner: InnerService,
     storage: Storage,
@@ -188,12 +196,12 @@ where
 
 impl<InnerService, Storage> CachingService<InnerService, Storage>
 where
-    Storage: CacheStorage + Send + Sync + 'static,
+    Storage: CacheStorage2 + Send + Sync + 'static,
 {
     /// Creates a new caching service
     pub fn new(inner: InnerService, storage: Storage) -> CachingService<InnerService, Storage>
     where
-        Storage: CacheStorage + Send + Sync + 'static,
+        Storage: CacheStorage2 + Send + Sync + 'static,
     {
         return CachingService { inner, storage };
     }
@@ -202,7 +210,7 @@ where
         &self,
         head: &http::request::Parts,
         req_cache_control: Option<&CacheControl>,
-    ) -> Option<Response<UnionBody<<Storage as CacheStorage>::CachedResponseBody, ByteBody>>>
+    ) -> Option<Response<UnionBody<<Storage as CacheStorage2>::CachedResponseBody, ByteBody>>>
     where
         InnerService: Service<S, Request<RequestBody>, Response = Response<ResponseBody>>,
         RequestBody: Body + Send + 'static,
@@ -215,15 +223,17 @@ where
         }
 
         // TODO: log failure, log not found result
-        let Ok(Some(response)) = self.storage.get_response(head).await else {
+        let Ok(cache_item) = self.storage.get_item(&head.uri, &head.headers).await else {
             return None;
         };
 
-        let (mut res_head, res_body) = response.0.into_parts();
+        let expiration_date = cache_item.get_expiration();
+        if expiration_date < SystemTime::now() {
+            cache_item.invalidate().await.ok();
+            return None;
+        }
 
-        // TODO: check staleness before checking preconditions
-
-        match handle_preconditions(head, &res_head, &response.1) {
+        match handle_preconditions(head, &cache_item) {
             PreconditionHandleResult::Passed
             | PreconditionHandleResult::Invalid
             | PreconditionHandleResult::NotPresent => {}
@@ -236,13 +246,20 @@ where
             }
         };
 
-        let new_age_header = get_current_response_age(&response.1, &res_head)?;
-        res_head.headers.remove("Age");
-        res_head.headers.append("Age", new_age_header);
-
-        return Some(Response::from_parts(res_head, UnionBody::first(res_body)));
+        return match head.method {
+            Method::HEAD => match generate_head_response(head.version, cache_item) {
+                Some(head_response) => Some(UnionBody::get_second_union_response(head_response)),
+                None => None,
+            },
+            _ => match generate_response(head.version, cache_item).await {
+                Some(response) => Some(UnionBody::get_first_union_response(response)),
+                _ => None,
+            },
+        };
     }
 
+    // TODO: whose responsibility is it to create trailer map?
+    // TODO: this use of result is dumb - maybe custom enum?
     async fn store_in_cache<ResponseBody, RequestBody, S>(
         &self,
         req_head: http::request::Parts,
@@ -253,7 +270,7 @@ where
         req_cache_control: Option<&CacheControl>,
         res_cache_control: Option<&CacheControl>,
     ) -> Result<
-        Response<<Storage as CacheStorage>::InterceptedResponseBody<ResponseBody>>,
+        Response<<Storage as CacheStorage2>::InterceptedResponseBody<ResponseBody>>,
         (http::request::Parts, http::response::Parts, ResponseBody),
     >
     where
@@ -263,6 +280,17 @@ where
             Body<Data: Buf + Clone + Send + Sync + 'static, Error: Into<BoxError>> + Send + 'static,
         S: Send + Sync + 'static,
     {
+        if Self::should_refresh_stored_response(&req_head, &res_head) {
+            self.refresh_from_not_modified_response(&req_head, &res_head, req_time, res_time)
+                .await;
+            return Err((req_head, res_head, res_body));
+        }
+
+        if req_head.method == Method::HEAD && res_head.status == StatusCode::OK {
+            self.refresh_from_head_ok_response(&req_head, &res_head, req_time, res_time)
+                .await;
+        }
+
         if !Self::should_store(&req_head, &res_head, req_cache_control, res_cache_control) {
             return Err((req_head, res_head, res_body));
         }
@@ -271,7 +299,7 @@ where
             return Err((req_head, res_head, res_body));
         };
 
-        let Some(expiration) = get_expiration_time(req_time, res_time, &res_head) else {
+        let Some(expiration) = get_expiration_time(req_time, res_time, &res_head.headers) else {
             return Err((req_head, res_head, res_body));
         };
 
@@ -279,40 +307,37 @@ where
             return Err((req_head, res_head, res_body));
         }
 
-        let mut res_headers_to_store = res_head.clone();
-        strip_non_storable_headers(&mut res_headers_to_store.headers);
+        let mut res_head_to_store = res_head.clone();
+        strip_non_storable_headers(&mut res_head_to_store.headers);
 
-        let metadata = &[
-            (
-                RESPONSE_DATE_KEY,
-                &Into::<DateTime<Utc>>::into(res_time.clone()).to_rfc3339()[..],
-            ),
-            (
-                REQUEST_DATE_KEY,
-                &Into::<DateTime<Utc>>::into(req_time.clone()).to_rfc3339()[..],
-            ),
-        ];
-
-        let cache_store_result = self
+        let Ok(mut new_item) = self
             .storage
-            .set_response(
-                Cow::Owned(cache_key),
-                expiration,
-                metadata,
-                Response::from_parts(res_headers_to_store, res_body),
-            )
-            .await;
+            .add_item(Cow::Owned(cache_key), usize::MAX)
+            .await
+        else {
+            return Err((req_head, res_head, res_body));
+        };
+
+        new_item.set_metadata(
+            RESPONSE_DATE_KEY.to_owned(),
+            Into::<DateTime<Utc>>::into(res_time.clone()).to_rfc3339(),
+        );
+        new_item.set_metadata(
+            REQUEST_DATE_KEY.to_owned(),
+            Into::<DateTime<Utc>>::into(req_time.clone()).to_rfc3339(),
+        );
+        new_item.set_expiration(expiration);
+        let headers_mut = new_item.get_headers_mut();
+        *headers_mut = res_head_to_store.headers;
+        let cache_store_result = new_item.commit_response(res_body).await;
 
         // TODO: log unsuccessful save to cache
         match cache_store_result {
-            Ok(intercepted_response) => {
-                let (_, intercepted_body) = intercepted_response.into_parts();
-
-                return Ok(Response::from_parts(res_head, intercepted_body));
+            Ok(intercepted_response_body) => {
+                return Ok(Response::from_parts(res_head, intercepted_response_body));
             }
-            Err((original_res, _error)) => {
-                let (original_res_head, original_res_body) = original_res.into_parts();
-                return Err((req_head, original_res_head, original_res_body));
+            Err((original_res_body, _error)) => {
+                return Err((req_head, res_head, original_res_body));
             }
         };
     }
@@ -348,8 +373,7 @@ where
     }
 
     fn can_serve_method_from_cache(method: &Method) -> bool {
-        // TODO: figure out how to deal with HEAD requests
-        return method == Method::GET;
+        return method == Method::GET || method == Method::HEAD;
     }
 
     fn is_range_request(request_head: &request::Parts) -> bool {
@@ -397,6 +421,96 @@ where
                 .unwrap_or(false);
         }
     }
+
+    fn should_refresh_stored_response(
+        request_head: &request::Parts,
+        response_head: &response::Parts,
+    ) -> bool {
+        return request_head.method == Method::GET
+            && response_head.status == StatusCode::NOT_MODIFIED;
+    }
+
+    async fn refresh_from_not_modified_response(
+        &self,
+        // TODO: what if response returns a different variance header? invalidate existing response?
+        request_head: &request::Parts,
+        response_head: &response::Parts,
+        req_time: &SystemTime,
+        res_time: &SystemTime,
+    ) {
+        // TODO: etag in trailers?
+        let Ok(mut cache_item) = self
+            .storage
+            .get_item(&request_head.uri, &request_head.headers)
+            .await
+        else {
+            return;
+        };
+
+        let cached_headers = cache_item.get_headers_mut();
+
+        if !check_res_validators_match(&response_head.headers, cached_headers) {
+            return;
+        }
+
+        if let Err(_) =
+            refresh_cached_response(&mut cache_item, &response_head.headers, req_time, res_time)
+        {
+            cache_item.invalidate().await.ok();
+            return;
+        }
+
+        // TODO: logging
+        cache_item.commit_changes().await.ok();
+    }
+
+    async fn refresh_from_head_ok_response(
+        &self,
+        // TODO: what if response returns a different variance header? invalidate existing response?
+        request_head: &request::Parts,
+        response_head: &response::Parts,
+        req_time: &SystemTime,
+        res_time: &SystemTime,
+    ) {
+        // TODO: etag in trailers?
+        let Ok(mut cache_item) = self
+            .storage
+            .get_item(&request_head.uri, &request_head.headers)
+            .await
+        else {
+            return;
+        };
+
+        let cached_headers = cache_item.get_headers_mut();
+
+        if !check_res_validators_match(&response_head.headers, &cached_headers) {
+            cache_item.invalidate().await.ok();
+            return;
+        }
+
+        let res_content_length =
+            ContentLength::decode(&mut response_head.headers.get_all(ContentLength::name()).iter())
+                .ok();
+
+        // TODO: if the content-length header is not present, can we use actual content length instead?
+        let cached_content_length =
+            ContentLength::decode(&mut cached_headers.get_all(ContentLength::name()).iter()).ok();
+
+        if res_content_length != cached_content_length {
+            cache_item.invalidate().await.ok();
+            return;
+        }
+
+        if let Err(_) =
+            refresh_cached_response(&mut cache_item, &response_head.headers, req_time, res_time)
+        {
+            cache_item.invalidate().await.ok();
+            return;
+        }
+
+        // TODO: logging
+        cache_item.commit_changes().await.ok();
+    }
 }
 
 impl<InnerService, Storage, S, RequestBody, ResponseBody> Service<S, Request<RequestBody>>
@@ -406,7 +520,7 @@ where
     RequestBody: Body + Send + 'static,
     ResponseBody:
         Body<Data: Buf + Clone + Send + Sync + 'static, Error: Into<BoxError>> + Send + 'static,
-    Storage: CacheStorage + Send + Sync + 'static,
+    Storage: CacheStorage2 + Send + Sync + 'static,
     S: Send + Sync + 'static,
 {
     type Response = Response<
@@ -423,7 +537,7 @@ where
         &self,
         ctx: Context<S>,
         req: Request<RequestBody>,
-    ) -> impl std::future::Future<Output = Result<Self::Response, Self::Error>> + Send + '_ {
+    ) -> impl std::future::Future<Output = Result<Self::Response, Self::Error>> + Send {
         return async {
             let (head, body) = req.into_parts();
             let req_cache_control =
@@ -527,27 +641,25 @@ fn strip_connection_header(headers: &mut HeaderMap<HeaderValue>) {
 
 // TODO: proper errors
 fn get_current_response_age(
-    metadata: &Vec<(String, String)>,
-    res_head: &response::Parts,
+    cache_item: &impl ExistingCacheRef,
+    res_headers: &HeaderMap,
 ) -> Option<HeaderValue> {
-    let Some(Ok(request_date)) = metadata
-        .iter()
-        .find(|t| t.1 == REQUEST_DATE_KEY)
-        .map(|t| DateTime::<Utc>::from_str(&t.1))
+    let Some(Ok(request_date)) = cache_item
+        .get_metadata(REQUEST_DATE_KEY)
+        .map(|t| DateTime::<Utc>::from_str(t))
     else {
         return None;
     };
-    let Some(Ok(response_date)) = metadata
-        .iter()
-        .find(|t| t.0 == RESPONSE_DATE_KEY)
-        .map(|t| DateTime::<Utc>::from_str(&t.1))
+    let Some(Ok(response_date)) = cache_item
+        .get_metadata(RESPONSE_DATE_KEY)
+        .map(|t| DateTime::<Utc>::from_str(t))
     else {
         return None;
     };
     let current_age = get_current_age(&GetAgeParams::new(
         request_date.into(),
         response_date.into(),
-        res_head,
+        res_headers,
     ))?;
     let Ok(new_age_header) = HeaderValue::from_str(&current_age.as_secs().to_string()) else {
         return None;
@@ -557,15 +669,14 @@ fn get_current_response_age(
 
 fn handle_preconditions(
     req_head: &request::Parts,
-    cached_res_head: &response::Parts,
-    cache_res_metadata: &Vec<(String, String)>,
+    cache_item: &impl ExistingCacheRef,
 ) -> PreconditionHandleResult {
     if req_head.headers.contains_key("If-None-Match") {
-        return handle_if_none_match_req(req_head, cached_res_head);
+        return handle_if_none_match_req(req_head, cache_item.get_headers());
     } else if (req_head.method == Method::GET || req_head.method == Method::HEAD)
         && req_head.headers.get_all("If-Modified-Since").iter().count() == 1
     {
-        return handle_if_modified_since_req(req_head, cached_res_head, cache_res_metadata);
+        return handle_if_modified_since_req(req_head, cache_item);
     }
 
     return PreconditionHandleResult::NotPresent;
@@ -573,9 +684,9 @@ fn handle_preconditions(
 
 fn handle_if_none_match_req(
     req_head: &request::Parts,
-    cached_res_head: &response::Parts,
+    cached_res_headers: &HeaderMap,
 ) -> PreconditionHandleResult {
-    let Ok(stored_etag) = ETag::decode(&mut cached_res_head.headers.get_all("ETag").iter()) else {
+    let Ok(stored_etag) = ETag::decode(&mut cached_res_headers.get_all("ETag").iter()) else {
         return PreconditionHandleResult::Invalid;
     };
 
@@ -589,7 +700,8 @@ fn handle_if_none_match_req(
         return PreconditionHandleResult::Passed;
     }
 
-    let Some(generated_304_response) = generate_304_response(cached_res_head) else {
+    let Some(generated_304_response) = generate_304_response(req_head.version, cached_res_headers)
+    else {
         return PreconditionHandleResult::InternalError;
     };
 
@@ -598,11 +710,10 @@ fn handle_if_none_match_req(
 
 fn handle_if_modified_since_req(
     req_head: &request::Parts,
-    cached_res_head: &response::Parts,
-    cache_res_metadata: &Vec<(String, String)>,
+    cache_item: &impl ExistingCacheRef,
 ) -> PreconditionHandleResult {
     let Some(cache_res_last_modified) =
-        get_cache_res_last_modified(cached_res_head, cache_res_metadata)
+        get_cache_res_last_modified(cache_item.get_headers(), cache_item)
     else {
         return PreconditionHandleResult::InternalError;
     };
@@ -617,30 +728,31 @@ fn handle_if_modified_since_req(
         return PreconditionHandleResult::Passed;
     }
 
-    let Some(generated_304_response) = generate_304_response(cached_res_head) else {
+    let Some(generated_304_response) =
+        generate_304_response(req_head.version, cache_item.get_headers())
+    else {
         return PreconditionHandleResult::InternalError;
     };
 
     return PreconditionHandleResult::NotPassed(generated_304_response);
 
     fn get_cache_res_last_modified(
-        cached_res_head: &response::Parts,
-        cache_res_metadata: &Vec<(String, String)>,
+        cached_res_headers: &HeaderMap,
+        cache_item: &impl ExistingCacheRef,
     ) -> Option<SystemTime> {
         if let Ok(last_modified) =
-            LastModified::decode(&mut cached_res_head.headers.get_all(LastModified::name()).iter())
+            LastModified::decode(&mut cached_res_headers.get_all(LastModified::name()).iter())
         {
             return Some(last_modified.into());
         }
 
-        if let Ok(date) = Date::decode(&mut cached_res_head.headers.get_all(Date::name()).iter()) {
+        if let Ok(date) = Date::decode(&mut cached_res_headers.get_all(Date::name()).iter()) {
             return Some(date.into());
         }
 
-        if let Some(response_date) = cache_res_metadata
-            .iter()
-            .find(|t| t.0 == RESPONSE_DATE_KEY)
-            .map(|res_date_str| DateTime::<FixedOffset>::parse_from_rfc3339(&res_date_str.1).ok())
+        if let Some(response_date) = cache_item
+            .get_metadata(RESPONSE_DATE_KEY)
+            .map(|res_date_str| DateTime::<FixedOffset>::parse_from_rfc3339(&res_date_str).ok())
             .flatten()
             .map(|res_date_time| SystemTime::from(res_date_time))
         {
@@ -651,18 +763,164 @@ fn handle_if_modified_since_req(
     }
 }
 
-fn generate_304_response(parts: &response::Parts) -> Option<Response<ByteBody>> {
-    let mut response_builder = response::Builder::new().status(304).version(parts.version);
+fn generate_304_response(
+    req_version: Version,
+    cached_headers: &HeaderMap,
+) -> Option<Response<ByteBody>> {
+    let mut response_builder = response::Builder::new().status(304).version(req_version);
 
     for &header_name in NOT_MODIFIED_RESPONSE_HEADERS {
-        for header_value in parts.headers.get_all(header_name) {
+        for header_value in cached_headers.get_all(header_name) {
             response_builder = response_builder.header(header_name, header_value);
         }
     }
 
     return response_builder
-        .body(ByteBody::from_byte_vec(&Vec::new())?)
+        .body(ByteBody::from_frame_vec(&Vec::new())?)
         .ok();
+}
+
+fn generate_head_response(
+    version: Version,
+    cache_item: impl CacheRef,
+) -> Option<Response<ByteBody>> {
+    let request_time = get_request_date(&cache_item)?;
+    let response_time = get_response_date(&cache_item)?;
+
+    let mut response_builder = response::Builder::new()
+        .status(cache_item.get_status())
+        .version(version);
+
+    let cache_headers = cache_item.get_headers();
+    for header_name in cache_headers.keys() {
+        for header_value in cache_headers.get_all(header_name) {
+            response_builder = response_builder.header(header_name, header_value);
+        }
+    }
+
+    let Some(mut response) = response_builder
+        .body(ByteBody::from_frame_vec(&Vec::new())?)
+        .ok()
+    else {
+        return None;
+    };
+
+    update_age_and_date_to_latest(request_time, response_time, response.headers_mut()).ok()?;
+
+    return Some(response);
+}
+
+fn generate_response<
+    CachedResponseBody: Body<Error: Into<BoxError>> + Send,
+    CR: ExistingCacheRef<CachedResponseBody = CachedResponseBody>,
+>(
+    version: Version,
+    cache_item: CR,
+) -> impl Future<Output = Option<Response<CachedResponseBody>>> + Send {
+    async move {
+        let request_time = get_request_date(&cache_item)?;
+        let response_time = get_response_date(&cache_item)?;
+
+        let mut response_builder = response::Builder::new()
+            .status(cache_item.get_status())
+            .version(version);
+
+        let cache_headers = cache_item.get_headers();
+        for header_name in cache_headers.keys() {
+            for header_value in cache_headers.get_all(header_name) {
+                response_builder = response_builder.header(header_name, header_value);
+            }
+        }
+
+        let cached_response_body = cache_item.get_response_body().await.ok()?;
+
+        let mut response = response_builder.body(cached_response_body).ok()?;
+
+        update_age_and_date_to_latest(request_time, response_time, response.headers_mut()).ok()?;
+
+        return Some(response);
+    }
+}
+
+fn check_res_validators_match(
+    first: &HeaderMap<HeaderValue>,
+    second: &HeaderMap<HeaderValue>,
+) -> bool {
+    if let Ok(first_etag) = ETag::decode(&mut first.get_all("ETag").iter()) {
+        let Ok(second_etag) = ETag::decode(&mut second.get_all("ETag").iter()) else {
+            return false;
+        };
+
+        return first_etag.eq(&second_etag);
+    } else if let Ok(first_last_modified) =
+        LastModified::decode(&mut first.get_all("Last-Modified").iter())
+    {
+        let Ok(second_last_modfied) =
+            LastModified::decode(&mut second.get_all("Last-Modified").iter())
+        else {
+            return false;
+        };
+
+        return first_last_modified.eq(&second_last_modfied);
+    }
+
+    return !first.contains_key("ETag")
+        && !second.contains_key("ETag")
+        && !first.contains_key("Last-Modified")
+        && !second.contains_key("Last-Modified");
+}
+
+/// Refreshes headers stored in cache according to
+/// https://httpwg.org/specs/rfc9111.html#update
+fn refresh_cached_response(
+    cache_item: &mut impl ExistingCacheRef,
+    response_headers: &HeaderMap<HeaderValue>,
+    req_time: &SystemTime,
+    res_time: &SystemTime,
+) -> Result<(), BoxError> {
+    let cache_headers = cache_item.get_headers_mut();
+    for res_header_key in response_headers.keys().unique() {
+        if NON_STORED_HEADERS.contains(&res_header_key.as_str()) {
+            continue;
+        }
+
+        cache_headers.remove(res_header_key);
+
+        for res_header_value in response_headers.get_all(res_header_key) {
+            cache_headers.append(res_header_key, res_header_value.clone());
+        }
+    }
+
+    let Some(new_expiration_time) =
+        get_expiration_time(req_time, res_time, cache_item.get_headers())
+    else {
+        return Err(ExpirationTimeCalculationError::new().into());
+    };
+    cache_item.set_expiration(new_expiration_time);
+
+    return Ok(());
+}
+
+fn get_request_date(cache_item: &impl CacheRef) -> Option<SystemTime> {
+    let Some(Ok(request_date)) = cache_item
+        .get_metadata(REQUEST_DATE_KEY)
+        .map(|t| DateTime::<Utc>::from_str(t))
+    else {
+        return None;
+    };
+
+    return Some(request_date.into());
+}
+
+fn get_response_date(cache_item: &impl CacheRef) -> Option<SystemTime> {
+    let Some(Ok(response_date)) = cache_item
+        .get_metadata(RESPONSE_DATE_KEY)
+        .map(|t| DateTime::<Utc>::from_str(t))
+    else {
+        return None;
+    };
+
+    return Some(response_date.into());
 }
 
 enum PreconditionHandleResult {
@@ -671,4 +929,10 @@ enum PreconditionHandleResult {
     NotPassed(Response<ByteBody>),
     Invalid,
     InternalError,
+}
+
+// TODO: refactor
+static_str_error! {
+    #[doc = "Failed to calculate expiration time"]
+    pub struct ExpirationTimeCalculationError;
 }

@@ -2,7 +2,10 @@ use std::task::Poll;
 
 use pin_project_lite::pin_project;
 use rama_core::error::BoxError;
-use rama_http_types::dep::http_body::{Body, Frame, SizeHint};
+use rama_http_types::{
+    Response,
+    dep::http_body::{Body, Frame, SizeHint},
+};
 
 use super::union_buf::UnionBuf;
 
@@ -38,9 +41,9 @@ pin_project! {
 }
 
 impl<
-        FirstResponseBody: Body<Error: Into<BoxError>>,
-        SecondResponseBody: Body<Error: Into<BoxError>>,
-    > UnionBody<FirstResponseBody, SecondResponseBody>
+    FirstResponseBody: Body<Error: Into<BoxError>>,
+    SecondResponseBody: Body<Error: Into<BoxError>>,
+> UnionBody<FirstResponseBody, SecondResponseBody>
 {
     pub fn first(
         first_body: FirstResponseBody,
@@ -61,15 +64,27 @@ impl<
     pub fn into_variant(self) -> UnionBodyVariant<FirstResponseBody, SecondResponseBody> {
         return match self.inner {
             UnionBodyEnum::First { body } => UnionBodyVariant::First(body),
-            UnionBodyEnum::Second { body } => UnionBodyVariant::Second(body)
+            UnionBodyEnum::Second { body } => UnionBodyVariant::Second(body),
         };
+    }
+
+    pub fn get_first_union_response(response: Response<FirstResponseBody>) -> Response<UnionBody<FirstResponseBody, SecondResponseBody>> {
+        let (head, body) = response.into_parts();
+
+        return Response::from_parts(head, UnionBody::first(body));
+    }
+
+    pub fn get_second_union_response(response: Response<SecondResponseBody>) -> Response<UnionBody<FirstResponseBody, SecondResponseBody>> {
+        let (head, body) = response.into_parts();
+
+        return Response::from_parts(head, UnionBody::second(body));
     }
 }
 
 impl<
-        FirstResponseBody: Body<Error: Into<BoxError>>,
-        SecondResponseBody: Body<Error: Into<BoxError>>,
-    > Body for UnionBody<FirstResponseBody, SecondResponseBody>
+    FirstResponseBody: Body<Error: Into<BoxError>>,
+    SecondResponseBody: Body<Error: Into<BoxError>>,
+> Body for UnionBody<FirstResponseBody, SecondResponseBody>
 {
     type Data = UnionBuf<FirstResponseBody::Data, SecondResponseBody::Data>;
 
@@ -122,7 +137,10 @@ pin_project! {
     }
 }
 
-pub enum UnionBodyVariant<FirstResponseBody: Body<Error:Into<BoxError>>, SecondResponseBody: Body<Error:Into<BoxError>>> {
+pub enum UnionBodyVariant<
+    FirstResponseBody: Body<Error: Into<BoxError>>,
+    SecondResponseBody: Body<Error: Into<BoxError>>,
+> {
     First(FirstResponseBody),
-    Second(SecondResponseBody)
+    Second(SecondResponseBody),
 }

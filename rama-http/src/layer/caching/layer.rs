@@ -1,19 +1,19 @@
 use rama_core::Layer;
 
 use super::{
-    CacheStorage, CachingService,
+    CacheStorage2, CachingService
 };
 
 /// A layer that implements caching
 #[derive(Debug)]
 pub struct CachingLayer<
-    Storage: CacheStorage + Send + Sync + 'static,
+    Storage: CacheStorage2 + Send + Sync + 'static,
     StorageFactory: Fn() -> Storage,
 > {
     storage_factory: StorageFactory,
 }
 
-impl<Storage: CacheStorage + Send + Sync + 'static, StorageFactory: Fn() -> Storage>
+impl<Storage: CacheStorage2 + Send + Sync + 'static, StorageFactory: Fn() -> Storage>
     CachingLayer<Storage, StorageFactory>
 {
     /// Creates a new caching layer
@@ -25,7 +25,7 @@ impl<Storage: CacheStorage + Send + Sync + 'static, StorageFactory: Fn() -> Stor
 // TODO: check https://users.rust-lang.org/t/unconstrained-type-parameter-when-the-parameter-is-constrained-by-a-where-clause/95512/7 on how to resolve this
 impl<
         InnerService,
-        Storage: CacheStorage + Send + Sync + 'static,
+        Storage: CacheStorage2 + Send + Sync + 'static,
         StorageFactory: Fn() -> Storage,
     > Layer<InnerService> for CachingLayer<Storage, StorageFactory>
 {

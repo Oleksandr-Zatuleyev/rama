@@ -1,17 +1,13 @@
 use core::fmt;
 use std::{
-    collections::VecDeque,
-    marker::PhantomData,
-    ops::DerefMut,
-    sync::{Arc, Mutex},
-    task::{Poll, Waker},
+    collections::VecDeque, marker::PhantomData, ops::DerefMut, sync::{Arc, Mutex}, task::{Poll, Waker}
 };
 
 use bytes::Bytes;
 use pin_project_lite::pin_project;
 use rama_http_types::dep::http_body::{Body, Frame, SizeHint};
 
-use rama_core::error::BoxError;
+use rama_core::error::{error, BoxError};
 
 use super::try_clone_byte_frame::{self, convert_buf_to_byte_frame};
 
@@ -26,6 +22,7 @@ pub(crate) fn intercept_body<InnerBody: Body<Error: Into<BoxError>>>(
         frames: VecDeque::new(),
         is_complete: false,
         is_failed: false,
+        is_cancelled: false,
         size_hint: SizeHint::new(),
         intercepting_body_waker: None,
     };
@@ -45,6 +42,7 @@ pub(crate) fn intercept_body<InnerBody: Body<Error: Into<BoxError>>>(
         },
     );
 
+    // TODO: cancel intercepting when intercepted is dropped before completion
     return InterceptBodyResult {
         intercepted: intercepted_body,
         intercepting: intercepting_body,
@@ -60,11 +58,18 @@ pub(crate) struct InterceptBodyResult<Inner: Body<Error: Into<BoxError>>> {
 
 pin_project! {
     #[derive(Debug)]
-    pub(crate) struct InterceptedBody<Inner: Body<Error: Into<BoxError>>> {
+    pub struct InterceptedBody<Inner: Body<Error: Into<BoxError>>> {
         #[pin]
         inner: Inner,
         handle: InterceptingBodyHandle,
         is_interception_failed: bool
+    }
+
+    impl<Inner: Body<Error: Into<BoxError>>> PinnedDrop for InterceptedBody<Inner> {
+        fn drop(this: Pin<&mut Self>) {
+            let this = this.project();
+            this.handle.cancel_if_in_progress();
+        }
     }
 }
 
@@ -164,8 +169,15 @@ struct InterceptingBodyState {
     frames: VecDeque<Frame<Bytes>>,
     is_complete: bool,
     is_failed: bool,
+    is_cancelled: bool,
     size_hint: SizeHint,
     intercepting_body_waker: Option<Waker>,
+}
+
+impl InterceptingBodyState {
+    fn is_in_progress(&self) -> bool {
+        return !self.is_complete && !self.is_failed && !self.is_cancelled;
+    }
 }
 
 impl InterceptingBodyHandle {
@@ -175,7 +187,7 @@ impl InterceptingBodyHandle {
 
             let state = state_guard.deref_mut();
 
-            if state.is_failed || state.is_complete {
+            if !state.is_in_progress() {
                 return;
             }
 
@@ -193,7 +205,7 @@ impl InterceptingBodyHandle {
 
             let state = state_guard.deref_mut();
 
-            if state.is_failed || state.is_complete {
+            if !state.is_in_progress() {
                 return;
             }
 
@@ -210,7 +222,7 @@ impl InterceptingBodyHandle {
 
             let state = state_guard.deref_mut();
 
-            if state.is_failed || state.is_complete {
+            if !state.is_in_progress() {
                 return;
             }
 
@@ -226,7 +238,7 @@ impl InterceptingBodyHandle {
 
         let state = state_guard.deref_mut();
 
-        if state.is_failed || state.is_complete {
+        if !state.is_in_progress() {
             return;
         }
 
@@ -237,6 +249,23 @@ impl InterceptingBodyHandle {
         if let Some(waker) = waker {
             waker.wake();
         }
+    }
+
+    fn cancel_if_in_progress(&self) {
+        let waker = {
+            let mut state_guard = self.state.lock().unwrap();
+
+            let state = state_guard.deref_mut();
+
+            if !state.is_in_progress() {
+                return;
+            }
+
+            state.is_cancelled = true;
+            state.intercepting_body_waker.take()
+        };
+
+        Self::try_wake(waker);
     }
 
     fn poll_frame(
@@ -257,6 +286,10 @@ impl InterceptingBodyHandle {
 
         if state.is_complete {
             return Poll::Ready(None);
+        }
+
+        if state.is_cancelled {
+            return Poll::Ready(Some(Err(Box::new(error!("stream was cancelled by client")))));
         }
 
         state.intercepting_body_waker = Some(cx.waker().clone());

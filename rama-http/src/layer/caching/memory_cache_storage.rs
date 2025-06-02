@@ -8,7 +8,7 @@
 // 2) expiration info
 // 3) guid to lru cache
 
-mod internal_expiration_queue;
+pub(crate) mod internal_expiration_queue;
 mod internal_lru_cache;
 mod internal_uri_map;
 mod memory_cached_response_body;
@@ -89,7 +89,7 @@ impl CacheStorage for MemoryCacheStorage {
                 return ready(Ok(None));
             };
 
-            let Some(cached_body) = ByteBody::from_byte_vec(&data.1) else {
+            let Some(cached_body) = ByteBody::from_frame_vec(&data.1) else {
                 return ready(Ok(None));
             };
 
